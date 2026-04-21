@@ -59,6 +59,13 @@ struct GeneralTab: View {
                 onExternalDisplayChanged?(newValue)
             }
             Toggle("Enable sounds", isOn: $settings.soundsEnabled)
+            Toggle(isOn: $settings.muteSoundsDuringCalls) {
+                Text("Mute sounds during calls")
+                Text("Silence alerts while the microphone is in use (Zoom, Meet, FaceTime, etc.)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!settings.soundsEnabled)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
