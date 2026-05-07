@@ -1,7 +1,9 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct SessionTabBar: View {
     @Bindable var sessionStore: SessionStore
+    @State private var draggedSessionId: UUID?
 
     var body: some View {
         HStack(spacing: 2) {
@@ -12,15 +14,59 @@ struct SessionTabBar: View {
                     terminalActive: session.hasStarted && sessionStore.activeXcodeProjects.contains(session.projectName),
                     terminalStatus: session.terminalStatus,
                     foregroundOpacity: sessionStore.isWindowFocused ? 1.0 : 0.6,
+                    isDragging: draggedSessionId == session.id,
                     onSelect: { sessionStore.selectSession(session.id) },
                     onClose: { sessionStore.closeSession(session.id) },
                     onRename: { newName in
                         sessionStore.renameSession(session.id, to: newName)
                     }
                 )
+                .onDrag {
+                    draggedSessionId = session.id
+                    return NSItemProvider(object: session.id.uuidString as NSString)
+                }
+                .onDrop(
+                    of: [.text],
+                    delegate: SessionTabDropDelegate(
+                        target: session,
+                        sessions: $sessionStore.sessions,
+                        draggedSessionId: $draggedSessionId,
+                        onCommit: { sessionStore.persistSessionOrder() }
+                    )
+                )
             }
         }
         .fixedSize(horizontal: true, vertical: false)
+    }
+}
+
+private struct SessionTabDropDelegate: DropDelegate {
+    let target: TerminalSession
+    @Binding var sessions: [TerminalSession]
+    @Binding var draggedSessionId: UUID?
+    let onCommit: () -> Void
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func dropEntered(info: DropInfo) {
+        guard let draggedId = draggedSessionId,
+              draggedId != target.id,
+              let from = sessions.firstIndex(where: { $0.id == draggedId }),
+              let to = sessions.firstIndex(where: { $0.id == target.id }) else { return }
+        withAnimation(.easeInOut(duration: 0.18)) {
+            sessions.move(
+                fromOffsets: IndexSet(integer: from),
+                toOffset: to > from ? to + 1 : to
+            )
+        }
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        draggedSessionId = nil
+        onCommit()
+        return true
     }
 }
 
@@ -30,6 +76,7 @@ struct SessionTab: View {
     let terminalActive: Bool
     var terminalStatus: TerminalStatus = .idle
     var foregroundOpacity: Double = 1.0
+    var isDragging: Bool = false
     let onSelect: () -> Void
     let onClose: () -> Void
     let onRename: (String) -> Void
@@ -98,6 +145,7 @@ struct SessionTab: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(isActive ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
         )
+        .opacity(isDragging ? 0.4 : 1.0)
         .onHover { hovering in
             isHovering = hovering
             if hovering {

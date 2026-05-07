@@ -416,6 +416,11 @@ class SessionStore {
         sessions[index].generation += 1
     }
 
+    /// Persist the current session order (used after a drag-reorder)
+    func persistSessionOrder() {
+        persistSessions()
+    }
+
     func closeSession(_ id: UUID) {
         if let session = sessions.first(where: { $0.id == id }) {
             dismissedProjects[session.projectName] = false
