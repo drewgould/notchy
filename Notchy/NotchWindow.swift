@@ -20,6 +20,20 @@ class NotchWindow: NSPanel {
     /// The screen this notch window targets (nil = built-in display).
     private let targetScreenID: CGDirectDisplayID?
 
+    /// True for external displays — pill stays hidden during routine activity
+    /// (no real notch to cover, so a black pill would just look like a stray box)
+    /// but becomes visible when a session needs the user's attention.
+    private var isExternal: Bool { targetScreenID != nil }
+
+    /// External screens only show the pill for these states — idle keeps
+    /// the window invisible.
+    private static let externalAttentionStates: Set<NotchDisplayState> = [
+        .working,
+        .waitingForInput,
+        .taskCompleted,
+        .interrupted,
+    ]
+
     /// Detected notch dimensions (updated on screen change).
     private var notchWidth: CGFloat = 180
     private var notchHeight: CGFloat = 37
@@ -66,11 +80,14 @@ class NotchWindow: NSPanel {
         ignoresMouseEvents = false
         alphaValue = 1
 
-        // Set up the pill view (always visible)
+        // Set up the pill view. Built-in: always visible (covers the real notch).
+        // External: created but invisible — only revealed when a session needs
+        // attention (see updateExpansionState / collapse).
         if let cv = contentView {
+            let initialAlpha: CGFloat = isExternal ? 0 : 1
             pillView.frame = cv.bounds
             pillView.autoresizingMask = [.width, .height]
-            pillView.alphaValue = 1
+            pillView.alphaValue = initialAlpha
             cv.addSubview(pillView)
             cv.wantsLayer = true
             cv.layer?.masksToBounds = false
@@ -79,7 +96,7 @@ class NotchWindow: NSPanel {
             let hostView = NSHostingView(rootView: NotchPillContent())
             hostView.frame = cv.bounds
             hostView.autoresizingMask = [.width, .height]
-            hostView.alphaValue = 1
+            hostView.alphaValue = initialAlpha
             hostView.wantsLayer = true
             hostView.layer?.backgroundColor = .clear
             cv.addSubview(hostView)
@@ -155,7 +172,16 @@ class NotchWindow: NSPanel {
     }
 
     private func updateExpansionState() {
-        let shouldExpand = NotchDisplayState.current != .idle
+        let state = NotchDisplayState.current
+        let shouldExpand: Bool
+        if isExternal {
+            // External screens stay hidden during routine activity — only
+            // attention states (waitingForInput/taskCompleted/interrupted)
+            // make the pill visible.
+            shouldExpand = Self.externalAttentionStates.contains(state)
+        } else {
+            shouldExpand = state != .idle
+        }
 
         if shouldExpand && !isExpanded {
             collapseDebounceTimer?.invalidate()
@@ -169,7 +195,11 @@ class NotchWindow: NSPanel {
                 guard let self else { return }
                 self.collapseDebounceTimer = nil
                 // Re-check — state may have changed during the debounce
-                if NotchDisplayState.current == .idle && self.isExpanded {
+                guard self.isExpanded else { return }
+                let stillShouldExpand: Bool = self.isExternal
+                    ? Self.externalAttentionStates.contains(NotchDisplayState.current)
+                    : NotchDisplayState.current != .idle
+                if !stillShouldExpand {
                     self.collapse()
                 }
             }
@@ -230,10 +260,14 @@ class NotchWindow: NSPanel {
     private func collapse() {
         isExpanded = false
 
-        // Fade out the status content but keep the pill visible
+        // Fade out the status content. On external screens also fade the pill
+        // itself, since there's no real notch to keep visible underneath.
         NSAnimationContext.runAnimationGroup { ctx in
             ctx.duration = 0.15
             self.pillContentHost?.animator().alphaValue = 0
+            if self.isExternal {
+                self.pillView.animator().alphaValue = 0
+            }
         }
 
         guard let screen = resolvedScreen else { return }
@@ -270,8 +304,11 @@ class NotchWindow: NSPanel {
                     display: true
                 )
                 if t >= 1.0 {
-                    // Show the idle content once collapse animation finishes
-                    self.pillContentHost?.alphaValue = 1
+                    // On built-in, show the idle content once collapse finishes.
+                    // External screens stay fully hidden between attention events.
+                    if !self.isExternal {
+                        self.pillContentHost?.alphaValue = 1
+                    }
                 }
             }
             return t < 1.0
@@ -582,9 +619,10 @@ enum NotchDisplayState: Equatable {
     case idle
     case working
     case waitingForInput
+    case interrupted
     case taskCompleted
 
-    /// Hierarchy: .taskCompleted (always shown) > .waitingForInput > .working > .idle
+    /// Hierarchy: .taskCompleted > .waitingForInput > .interrupted > .working > .idle
     static var current: NotchDisplayState {
         guard SettingsManager.shared.claudeIntegrationEnabled else { return .idle }
         let sessions = SessionStore.shared.sessions
@@ -593,6 +631,9 @@ enum NotchDisplayState: Equatable {
         }
         if sessions.contains(where: { $0.terminalStatus == .waitingForInput }) {
             return .waitingForInput
+        }
+        if sessions.contains(where: { $0.terminalStatus == .interrupted }) {
+            return .interrupted
         }
         if sessions.contains(where: { $0.terminalStatus == .working }) {
             return .working
@@ -637,6 +678,11 @@ struct NotchPillContent: View {
                         Image(systemName: "exclamationmark.triangle.fill")
                             .font(.system(size: 16, weight: .bold))
                             .foregroundColor(.yellow)
+                            .transition(.scale.combined(with: .opacity))
+                    case .interrupted:
+                        Image(systemName: "exclamationmark.octagon.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .foregroundColor(.red)
                             .transition(.scale.combined(with: .opacity))
                     case .working:
                         SpinnerView()

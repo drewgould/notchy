@@ -331,8 +331,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         for screen in externalScreens {
             let id = screen.displayID
             guard externalNotchWindows[id] == nil else { continue }
-            let window = NotchWindow(screenID: id) { [weak self, weak screen] in
-                self?.notchHovered(on: screen)
+            // Capture displayID and resolve the live NSScreen at hover time —
+            // a `weak` NSScreen reference can go nil when the screen array
+            // refreshes, which would silently fall back to the built-in display.
+            let window = NotchWindow(screenID: id) { [weak self] in
+                let liveScreen = NSScreen.screens.first { $0.displayID == id }
+                self?.notchHovered(on: liveScreen)
             }
             window.isPanelVisible = { [weak self] in
                 self?.panel.isVisible ?? false
