@@ -5,11 +5,13 @@ enum SettingsTab: String, CaseIterable {
     case about = "About"
     case general = "General"
     case integrations = "Integrations"
+    case accounts = "Accounts"
 
     var icon: String {
         switch self {
         case .general: return "gearshape"
         case .integrations: return "puzzlepiece"
+        case .accounts: return "person.crop.circle"
         case .about: return "info.circle"
         }
     }
@@ -21,20 +23,61 @@ struct SettingsContentView: View {
     var onExternalDisplayChanged: ((Bool) -> Void)?
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            AboutTab()
-                .tabItem { Label(SettingsTab.about.rawValue, systemImage: SettingsTab.about.icon) }
-                .tag(SettingsTab.about)
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                ForEach(SettingsTab.allCases, id: \.self) { tab in
+                    SettingsTabButton(tab: tab, isSelected: selectedTab == tab) {
+                        selectedTab = tab
+                    }
+                }
+            }
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity)
+            .background(.bar)
 
-            GeneralTab(onShowNotchChanged: onShowNotchChanged, onExternalDisplayChanged: onExternalDisplayChanged)
-                .tabItem { Label(SettingsTab.general.rawValue, systemImage: SettingsTab.general.icon) }
-                .tag(SettingsTab.general)
+            Divider()
 
-            IntegrationsTab()
-                .tabItem { Label(SettingsTab.integrations.rawValue, systemImage: SettingsTab.integrations.icon) }
-                .tag(SettingsTab.integrations)
+            Group {
+                switch selectedTab {
+                case .about:
+                    AboutTab()
+                case .general:
+                    GeneralTab(onShowNotchChanged: onShowNotchChanged, onExternalDisplayChanged: onExternalDisplayChanged)
+                case .integrations:
+                    IntegrationsTab()
+                case .accounts:
+                    AccountsTab()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .frame(width: 450, height: 240)
+        .frame(width: 450, height: 300)
+    }
+}
+
+struct SettingsTabButton: View {
+    let tab: SettingsTab
+    let isSelected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            VStack(spacing: 3) {
+                Image(systemName: tab.icon)
+                    .font(.system(size: 16))
+                Text(tab.rawValue)
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(isSelected ? Color.accentColor : Color.secondary)
+            .frame(width: 68)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.primary.opacity(0.08) : Color.clear)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .buttonStyle(.plain)
     }
 }
 
@@ -89,9 +132,96 @@ struct IntegrationsTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Toggle(isOn: $settings.claudeAutoModeEnabled) {
+                Text("Auto mode")
+                Text("Launch Claude with --enable-auto-mode")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .disabled(!settings.claudeIntegrationEnabled)
+            Section {
+                SecureField("Anthropic API key", text: $settings.anthropicAPIKey)
+                    .textFieldStyle(.roundedBorder)
+                Text("Used to generate two-sentence \"next steps\" summaries when Claude finishes a task. Leave blank to disable.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+struct AccountsTab: View {
+    @Bindable private var settings = SettingsManager.shared
+    @State private var newName = ""
+    @State private var renameId: UUID?
+    @State private var renameText = ""
+
+    var body: some View {
+        Form {
+            Section("Claude Accounts") {
+                if settings.accounts.isEmpty {
+                    Text("No accounts yet. Add one below, then assign it to a project from the project menu in the panel.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(settings.accounts) { account in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(account.name)
+                            Text(account.configDirURL.path)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        Spacer()
+                        Button("Rename") {
+                            renameId = account.id
+                            renameText = account.name
+                        }
+                        Button(role: .destructive) {
+                            settings.removeAccount(account.id)
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                    }
+                }
+            }
+            Section {
+                HStack {
+                    TextField("New account name", text: $newName)
+                        .textFieldStyle(.roundedBorder)
+                        .onSubmit(addAccount)
+                    Button("Add", action: addAccount)
+                        .disabled(newName.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                Text("Each account uses its own Claude config directory. The first terminal you open in a project assigned to a new account will prompt you to log in.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .alert("Rename Account", isPresented: Binding(
+            get: { renameId != nil },
+            set: { if !$0 { renameId = nil } }
+        )) {
+            TextField("Name", text: $renameText)
+            Button("Rename") {
+                if let id = renameId { settings.renameAccount(id, to: renameText) }
+                renameId = nil
+            }
+            Button("Cancel", role: .cancel) { renameId = nil }
+        }
+    }
+
+    private func addAccount() {
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        settings.addAccount(named: trimmed)
+        newName = ""
     }
 }
 
@@ -136,7 +266,7 @@ class SettingsWindowController {
         let hostingView = NSHostingView(rootView: content)
 
         let win = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 450, height: 240),
+            contentRect: NSRect(x: 0, y: 0, width: 450, height: 300),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false

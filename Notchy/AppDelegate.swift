@@ -31,8 +31,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             setupExternalDisplayWindows()
         }
         observeScreenChanges()
+        // Boot a shell (+ claude) for every restored tab so they're warm before
+        // the panel is shown — otherwise only the active tab gets a terminal.
+        sessionStore.warmUpRestoredSessions()
         // Detect in background so launch isn't blocked
         sessionStore.detectAllXcodeProjectsAsync()
+        UsageMonitor.shared.start()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        // Capture mid-typing drafts that updatePendingPromptText doesn't persist
+        // on every keystroke.
+        sessionStore.flushPersistence()
     }
 
     private func setupStatusItem() {
@@ -204,8 +214,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func showContextMenu() {
         let menu = NSMenu()
 
-        if !sessionStore.sessions.isEmpty {
-            for session in sessionStore.sessions {
+        let groups = sessionStore.projectGroups
+        let activeGroupId = sessionStore.activeProjectGroupId
+        let sessionsByGroup = Dictionary(grouping: sessionStore.sessions, by: { $0.groupId })
+        let orphanSessions = sessionsByGroup[nil] ?? []
+
+        if !groups.isEmpty {
+            for group in groups {
+                let item = NSMenuItem(
+                    title: group.name,
+                    action: #selector(selectGroup(_:)),
+                    keyEquivalent: ""
+                )
+                item.target = self
+                item.representedObject = group.id
+                if group.id == activeGroupId { item.state = .on }
+                menu.addItem(item)
+
+                let groupSessions = sessionsByGroup[group.id] ?? []
+                for session in groupSessions {
+                    let sub = NSMenuItem(
+                        title: session.projectName,
+                        action: #selector(selectSession(_:)),
+                        keyEquivalent: ""
+                    )
+                    sub.target = self
+                    sub.representedObject = session.id
+                    sub.indentationLevel = 1
+                    if session.id == sessionStore.activeSessionId { sub.state = .on }
+                    menu.addItem(sub)
+                }
+            }
+            menu.addItem(.separator())
+        }
+
+        if !orphanSessions.isEmpty {
+            for session in orphanSessions {
                 let item = NSMenuItem(
                     title: session.projectName,
                     action: #selector(selectSession(_:)),
@@ -213,6 +257,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 )
                 item.target = self
                 item.representedObject = session.id
+                if session.id == sessionStore.activeSessionId { item.state = .on }
                 menu.addItem(item)
             }
             menu.addItem(.separator())
@@ -253,6 +298,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func selectSession(_ sender: NSMenuItem) {
         guard let sessionId = sender.representedObject as? UUID else { return }
         sessionStore.selectSession(sessionId)
+        showPanelBelowStatusItem()
+    }
+
+    @objc private func selectGroup(_ sender: NSMenuItem) {
+        guard let groupId = sender.representedObject as? UUID else { return }
+        sessionStore.selectGroup(groupId)
         showPanelBelowStatusItem()
     }
 

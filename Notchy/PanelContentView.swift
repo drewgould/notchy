@@ -35,6 +35,7 @@ struct PanelContentView: View {
     var onClose: () -> Void
     var onToggleExpand: (() -> Void)?
     @State private var showRestoreConfirmation = false
+    @State private var showConductor = false
 
     private var foregroundOpacity: Double {
         sessionStore.isWindowFocused ? 1.0 : 0.6
@@ -82,8 +83,11 @@ struct PanelContentView: View {
                             .frame(height: 200)
                     )
 
+                ProjectGroupPill(sessionStore: sessionStore, foregroundOpacity: foregroundOpacity)
 
-                SessionTabBar(sessionStore: sessionStore)
+                SessionTabBar(sessionStore: sessionStore, onTabSelected: { _ in
+                    showConductor = false
+                })
 
                 Rectangle()
                     .foregroundColor(.clear)
@@ -95,6 +99,20 @@ struct PanelContentView: View {
                         })
                             .frame(height: 200)
                     )
+
+                ZStack {
+                    Button(action: { showConductor.toggle() }) {
+                        Image(systemName: showConductor ? "rectangle.stack.fill" : "rectangle.stack")
+                            .font(.system(size: 12, weight: .medium))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.white.opacity(foregroundOpacity))
+                    .help(showConductor ? "Hide Conductor" : "Show Conductor (all sessions)")
+                }
+                .padding(.leading, -4)
+                .padding(.trailing, -4)
 
                 ZStack {
                     Button(action: { sessionStore.createQuickSession() }) {
@@ -184,8 +202,11 @@ struct PanelContentView: View {
             if sessionStore.isTerminalExpanded {
                 Divider()
 
-                // Terminal area
-                if let session = sessionStore.activeSession {
+                if showConductor {
+                    ConductorView(sessionStore: sessionStore, onSessionSelected: { _ in
+                        showConductor = false
+                    })
+                } else if let session = sessionStore.activeSession {
                     if session.hasStarted {
                         TerminalSessionView(
                             sessionId: session.id,
@@ -221,6 +242,31 @@ struct PanelContentView: View {
                     placeholderView("No Xcode projects detected.\nClick + to create a new session.")
                 } else {
                     placeholderView("Select a project to begin")
+                }
+
+                if !showConductor,
+                   let session = sessionStore.activeSession,
+                   let lastRequest = session.lastRequest,
+                   !lastRequest.isEmpty {
+                    HStack(spacing: 6) {
+                        Image(systemName: "arrow.up.message")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.45))
+                        Text("Last request:")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundColor(.white.opacity(0.45))
+                        Text(lastRequest)
+                            .font(.system(size: 10))
+                            .foregroundColor(.white.opacity(0.7))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        Spacer(minLength: 8)
+                        UsageInlineBadge(monitor: UsageMonitor.shared)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Color(nsColor: NSColor(white: 0.13, alpha: 1.0)).opacity(chromeBackgroundOpacity))
+                    .help(lastRequest)
                 }
             }
         }
@@ -270,5 +316,41 @@ struct PanelContentView: View {
                     .multilineTextAlignment(.center)
                     .opacity(0)
             }
+    }
+}
+
+/// Compact Claude Code usage readout shown at the right edge of the
+/// last-request bar — one colored percentage per usage window.
+private struct UsageInlineBadge: View {
+    @Bindable var monitor: UsageMonitor
+
+    private func color(for percent: Int) -> Color {
+        if percent >= 90 { return .red }
+        if percent >= 70 { return .orange }
+        return .green
+    }
+
+    var body: some View {
+        if let windows = monitor.snapshot?.windows, !windows.isEmpty {
+            HStack(spacing: 8) {
+                Image(systemName: "gauge.with.dots.needle.50percent")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white.opacity(0.4))
+                ForEach(windows) { window in
+                    HStack(spacing: 3) {
+                        Text(window.label)
+                            .font(.system(size: 9))
+                            .foregroundColor(.white.opacity(0.45))
+                            .lineLimit(1)
+                        Text("\(window.percent)%")
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .foregroundColor(color(for: window.percent).opacity(0.95))
+                    }
+                    .fixedSize()
+                }
+            }
+            .help(windows.map { "\($0.label): \($0.percent)%" + ($0.resets.map { " (resets \($0))" } ?? "") }
+                .joined(separator: "\n"))
+        }
     }
 }

@@ -2,38 +2,75 @@ import Foundation
 import CoreAudio
 
 enum MicrophoneActivityMonitor {
+    /// True if any audio device with input streams is currently running.
+    /// We can't rely on the default input device alone — Teams, Zoom, etc.
+    /// frequently route through a specific device (headset, virtual mic)
+    /// that isn't the system default.
     static var isInputDeviceActive: Bool {
-        var deviceID = AudioDeviceID(0)
-        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
-        var defaultAddress = AudioObjectPropertyAddress(
-            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+        for deviceID in allAudioDevices() where deviceHasInputStreams(deviceID) {
+            if deviceIsRunningSomewhere(deviceID) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func allAudioDevices() -> [AudioDeviceID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        let defaultStatus = AudioObjectGetPropertyData(
+        var dataSize: UInt32 = 0
+        let sizeStatus = AudioObjectGetPropertyDataSize(
             AudioObjectID(kAudioObjectSystemObject),
-            &defaultAddress,
+            &address,
             0, nil,
-            &size,
-            &deviceID
+            &dataSize
         )
-        guard defaultStatus == noErr, deviceID != 0 else { return false }
+        guard sizeStatus == noErr, dataSize > 0 else { return [] }
 
+        let count = Int(dataSize) / MemoryLayout<AudioDeviceID>.size
+        var devices = [AudioDeviceID](repeating: 0, count: count)
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0, nil,
+            &dataSize,
+            &devices
+        )
+        guard status == noErr else { return [] }
+        return devices
+    }
+
+    private static func deviceHasInputStreams(_ deviceID: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        let status = AudioObjectGetPropertyDataSize(deviceID, &address, 0, nil, &dataSize)
+        guard status == noErr else { return false }
+        return dataSize > 0
+    }
+
+    private static func deviceIsRunningSomewhere(_ deviceID: AudioDeviceID) -> Bool {
         var isRunning: UInt32 = 0
-        var runningSize = UInt32(MemoryLayout<UInt32>.size)
-        var runningAddress = AudioObjectPropertyAddress(
+        var size = UInt32(MemoryLayout<UInt32>.size)
+        var address = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        let runningStatus = AudioObjectGetPropertyData(
+        let status = AudioObjectGetPropertyData(
             deviceID,
-            &runningAddress,
+            &address,
             0, nil,
-            &runningSize,
+            &size,
             &isRunning
         )
-        guard runningStatus == noErr else { return false }
+        guard status == noErr else { return false }
         return isRunning != 0
     }
 }

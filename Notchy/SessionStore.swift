@@ -15,6 +15,21 @@ class SessionStore {
 
     var sessions: [TerminalSession] = []
     var activeSessionId: UUID?
+
+    /// All known project groups. Auto-populated as new git roots are discovered;
+    /// also editable by the user (rename, delete-when-empty, new).
+    var projectGroups: [ProjectGroup] = []
+    /// Group whose tabs are currently visible in the tab bar. nil only briefly
+    /// before the first group exists.
+    var activeProjectGroupId: UUID? {
+        didSet {
+            if let id = activeProjectGroupId {
+                UserDefaults.standard.set(id.uuidString, forKey: Self.activeGroupKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: Self.activeGroupKey)
+            }
+        }
+    }
     var isPinned: Bool = {
         if UserDefaults.standard.object(forKey: "isPinned") == nil { return true }
         return UserDefaults.standard.bool(forKey: "isPinned")
@@ -28,6 +43,11 @@ class SessionStore {
     var isWindowFocused = true
     var isShowingDialog = false
     var hasCompletedInitialDetection = false
+
+    /// Non-nil while the user is mid drag-reorder of a tab. Lifted out of
+    /// `SessionTabBar` so other views observing `sessions` (notably the
+    /// Conductor) can freeze their layout while the array churns.
+    var draggedSessionId: UUID?
 
     /// The most recent checkpoint for the active session, used to show the undo button
     var lastCheckpoint: Checkpoint?
@@ -74,13 +94,55 @@ class SessionStore {
 
     private static let sessionsKey = "persistedSessions"
     private static let activeSessionKey = "activeSessionId"
+    private static let groupsKey = "projectGroups"
+    private static let activeGroupKey = "activeProjectGroupId"
+
+    /// Cache of resolved git roots keyed by working directory. Avoids re-spawning
+    /// `git` for repeated lookups in the same dir (e.g. multiple sessions sharing it).
+    private var gitRootCache: [String: String?] = [:]
 
     init() {
+        restoreGroups()
         restoreSessions()
+        backfillMissingGroupIds()
+        restoreActiveGroup()
         updatePollingTimer()
     }
 
     // MARK: - Session Persistence
+
+    private func restoreGroups() {
+        guard let data = UserDefaults.standard.data(forKey: Self.groupsKey),
+              let decoded = try? JSONDecoder().decode([ProjectGroup].self, from: data) else { return }
+        projectGroups = decoded
+    }
+
+    private func restoreActiveGroup() {
+        if let saved = UserDefaults.standard.string(forKey: Self.activeGroupKey),
+           let uuid = UUID(uuidString: saved),
+           projectGroups.contains(where: { $0.id == uuid }) {
+            activeProjectGroupId = uuid
+        } else {
+            // Follow the active session if we have one, otherwise the first group.
+            activeProjectGroupId = activeSession?.groupId ?? projectGroups.first?.id
+        }
+    }
+
+    /// Resolves git roots for any session whose `groupId` is nil (pre-feature
+    /// data) and finds-or-creates the matching `ProjectGroup`. Runs synchronously
+    /// at launch — git rev-parse is cheap and this is a one-time pass per session.
+    private func backfillMissingGroupIds() {
+        var changed = false
+        for i in sessions.indices where sessions[i].groupId == nil {
+            let groupId = findOrCreateGroup(for: sessions[i])
+            sessions[i].groupId = groupId
+            changed = true
+        }
+        if changed {
+            persistGroups()
+            persistSessions()
+        }
+    }
 
     private func restoreSessions() {
         guard let data = UserDefaults.standard.data(forKey: Self.sessionsKey),
@@ -98,11 +160,50 @@ class SessionStore {
         for i in sessions.indices {
             sessions[i].hasStarted = true
             sessions[i].hasBeenSelected = true
+            // One-time cleanup: collapse adjacent exchanges with identical
+            // prompts that were captured by an earlier scraper-flicker bug.
+            // Prefer keeping the entry that has a generated summary, the
+            // verified flag, or a completion timestamp.
+            sessions[i].exchanges = collapseAdjacentDuplicates(sessions[i].exchanges)
         }
+        persistSessions()
     }
 
+    private func collapseAdjacentDuplicates(_ exchanges: [TaskExchange]) -> [TaskExchange] {
+        var result: [TaskExchange] = []
+        for exchange in exchanges {
+            if let last = result.last, last.prompt == exchange.prompt {
+                result[result.count - 1] = pickBetter(last, exchange)
+            } else {
+                result.append(exchange)
+            }
+        }
+        return result
+    }
+
+    private func pickBetter(_ a: TaskExchange, _ b: TaskExchange) -> TaskExchange {
+        let aScore = (a.verified ? 4 : 0) + (a.summary != nil ? 2 : 0) + (a.completedAt != nil ? 1 : 0)
+        let bScore = (b.verified ? 4 : 0) + (b.summary != nil ? 2 : 0) + (b.completedAt != nil ? 1 : 0)
+        return bScore > aScore ? b : a
+    }
+
+    /// Cap on persisted exchanges per session — keeps UserDefaults blob small
+    /// while still showing the user a meaningful history on next launch.
+    private static let persistedExchangeLimit = 50
+
     private func persistSessions() {
-        let persisted = sessions.map { PersistedSession(id: $0.id, projectName: $0.projectName, projectPath: $0.projectPath, workingDirectory: $0.workingDirectory) }
+        let persisted = sessions.map { session -> PersistedSession in
+            let trimmed = Array(session.exchanges.suffix(Self.persistedExchangeLimit))
+            return PersistedSession(
+                id: session.id,
+                projectName: session.projectName,
+                projectPath: session.projectPath,
+                workingDirectory: session.workingDirectory,
+                exchanges: trimmed,
+                pendingPromptText: session.pendingPromptText,
+                groupId: session.groupId
+            )
+        }
         if let data = try? JSONEncoder().encode(persisted) {
             UserDefaults.standard.set(data, forKey: Self.sessionsKey)
         }
@@ -110,6 +211,169 @@ class SessionStore {
             UserDefaults.standard.set(activeId.uuidString, forKey: Self.activeSessionKey)
         } else {
             UserDefaults.standard.removeObject(forKey: Self.activeSessionKey)
+        }
+    }
+
+    private func persistGroups() {
+        if let data = try? JSONEncoder().encode(projectGroups) {
+            UserDefaults.standard.set(data, forKey: Self.groupsKey)
+        }
+    }
+
+    // MARK: - Project Groups
+
+    /// Shells out to `git -C <dir> rev-parse --show-toplevel` to find the
+    /// repo root. Returns nil if not in a git repo or the command fails.
+    /// Memoized per directory to avoid repeated work.
+    private func gitRoot(for directory: String) -> String? {
+        if let cached = gitRootCache[directory] {
+            return cached
+        }
+        let result: String? = {
+            guard FileManager.default.fileExists(atPath: directory) else { return nil }
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["git", "-C", directory, "rev-parse", "--show-toplevel"]
+            let pipe = Pipe()
+            process.standardOutput = pipe
+            process.standardError = Pipe()
+            do {
+                try process.run()
+                process.waitUntilExit()
+            } catch {
+                return nil
+            }
+            guard process.terminationStatus == 0,
+                  let data = try? pipe.fileHandleForReading.readToEnd(),
+                  let out = String(data: data, encoding: .utf8) else { return nil }
+            let trimmed = out.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }()
+        gitRootCache[directory] = result
+        return result
+    }
+
+    /// Find an existing group matching the session's git root, or create one.
+    /// Sessions without a git root all fall into a single "Other" sentinel group
+    /// (created lazily on first need).
+    private func findOrCreateGroup(for session: TerminalSession) -> UUID {
+        if let root = gitRoot(for: session.workingDirectory) {
+            if let existing = projectGroups.first(where: { $0.rootPath == root }) {
+                return existing.id
+            }
+            let name = (root as NSString).lastPathComponent
+            let group = ProjectGroup(name: name.isEmpty ? "Project" : name, rootPath: root)
+            projectGroups.append(group)
+            return group.id
+        }
+        if let other = projectGroups.first(where: { $0.rootPath == nil && $0.name == "Other" }) {
+            return other.id
+        }
+        let other = ProjectGroup(name: "Other", rootPath: nil)
+        projectGroups.append(other)
+        return other.id
+    }
+
+    /// True when any session in the group is blocked waiting for user input —
+    /// drives the "!" marker in the project switcher menu.
+    func groupNeedsAttention(_ id: UUID) -> Bool {
+        sessions.contains { $0.groupId == id && $0.terminalStatus == .waitingForInput }
+    }
+
+    /// Sessions belonging to the currently-active project group. Drives the tab bar.
+    var sessionsInActiveGroup: [TerminalSession] {
+        guard let activeId = activeProjectGroupId else { return sessions }
+        return sessions.filter { $0.groupId == activeId }
+    }
+
+    /// Switch which group's tabs are visible. If the previously-active session
+    /// isn't in the new group, fall back to that group's first session (or nil).
+    func selectGroup(_ id: UUID) {
+        activeProjectGroupId = id
+        if let active = activeSession, active.groupId == id { return }
+        if let first = sessions.first(where: { $0.groupId == id }) {
+            activeSessionId = first.id
+        }
+        persistSessions()
+    }
+
+    /// Create a new empty group and make it active. Returns the new group's ID.
+    @discardableResult
+    func createGroup(named name: String) -> UUID {
+        let group = ProjectGroup(name: name.isEmpty ? "Untitled" : name, rootPath: nil)
+        projectGroups.append(group)
+        persistGroups()
+        return group.id
+    }
+
+    func renameGroup(_ id: UUID, to newName: String) {
+        guard let index = projectGroups.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = newName.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        projectGroups[index].name = trimmed
+        persistGroups()
+    }
+
+    /// Assign (or clear, with nil) the Claude account a group's terminals run
+    /// under, then restart the group's running sessions so their new shells
+    /// pick up the account's `CLAUDE_CONFIG_DIR`.
+    func setAccount(_ accountId: UUID?, forGroup groupId: UUID) {
+        guard let index = projectGroups.firstIndex(where: { $0.id == groupId }),
+              projectGroups[index].accountId != accountId else { return }
+        projectGroups[index].accountId = accountId
+        persistGroups()
+        for session in sessions where session.groupId == groupId && session.hasStarted {
+            restartSession(session.id)
+        }
+    }
+
+    /// Delete a group. Only succeeds if the group has no member sessions —
+    /// otherwise the caller should reassign or close those sessions first.
+    @discardableResult
+    func deleteGroup(_ id: UUID) -> Bool {
+        guard sessions.allSatisfy({ $0.groupId != id }) else { return false }
+        projectGroups.removeAll { $0.id == id }
+        if activeProjectGroupId == id {
+            activeProjectGroupId = projectGroups.first?.id
+            if let firstId = activeProjectGroupId,
+               let first = sessions.first(where: { $0.groupId == firstId }) {
+                activeSessionId = first.id
+            }
+        }
+        persistGroups()
+        return true
+    }
+
+    /// Move a session into a different group. Switches the active group to match
+    /// so the user sees where the tab went.
+    func moveSession(_ sessionId: UUID, toGroup groupId: UUID) {
+        guard let sIdx = sessions.firstIndex(where: { $0.id == sessionId }),
+              projectGroups.contains(where: { $0.id == groupId }) else { return }
+        sessions[sIdx].groupId = groupId
+        activeProjectGroupId = groupId
+        activeSessionId = sessionId
+        persistSessions()
+    }
+
+    /// Force-write the latest in-memory state to disk. Called from
+    /// applicationWillTerminate so a draft mid-keystroke survives Cmd+Q
+    /// (updatePendingPromptText doesn't persist on every keystroke).
+    func flushPersistence() {
+        persistSessions()
+    }
+
+    /// Eagerly boot the terminal process for every restored session so each tab
+    /// is already cd'd into its saved directory (and running `claude` for project
+    /// tabs with a CLAUDE.md) by the time the user reveals the panel. Without this
+    /// only the active tab's `TerminalSessionView` triggers terminal creation, so
+    /// inactive tabs sit cold until clicked.
+    func warmUpRestoredSessions() {
+        for session in sessions where session.hasStarted {
+            _ = TerminalManager.shared.terminal(
+                for: session.id,
+                workingDirectory: session.workingDirectory,
+                launchClaude: session.projectPath != nil
+            )
         }
     }
 
@@ -182,17 +446,39 @@ class SessionStore {
         }
 
 
+        var groupsChanged = false
         for project in projects {
-            guard !sessions.contains(where: { $0.projectName == project.name }),
-                  dismissedProjects[project.name] == nil else { continue }
-            let session = TerminalSession(
+            if let index = sessions.firstIndex(where: { $0.projectName == project.name }) {
+                // Heal sessions created while AppleScript reported no path
+                // (`missing value`) — adopt the real path once detection has it.
+                if !project.path.isEmpty, sessions[index].projectPath != project.path {
+                    sessions[index].projectPath = project.path
+                    // Only retarget the directory if no shell is running yet;
+                    // a live shell's cwd is tracked via OSC 7 instead.
+                    if !sessions[index].hasStarted {
+                        sessions[index].workingDirectory = project.directoryPath
+                    }
+                }
+                continue
+            }
+            guard dismissedProjects[project.name] == nil else { continue }
+            var session = TerminalSession(
                 projectName: project.name,
                 projectPath: project.path,
                 workingDirectory: project.directoryPath,
                 started: false
             )
+            let groupsBefore = projectGroups.count
+            session.groupId = findOrCreateGroup(for: session)
+            if projectGroups.count != groupsBefore { groupsChanged = true }
             sessions.append(session)
         }
+        // First session ever — make sure something is the active group so the
+        // tab bar isn't empty.
+        if activeProjectGroupId == nil {
+            activeProjectGroupId = projectGroups.first?.id
+        }
+        if groupsChanged { persistGroups() }
         persistSessions()
     }
 
@@ -206,6 +492,9 @@ class SessionStore {
             guard !sessions[index].hasBeenSelected else { return false }
             sessions[index].hasBeenSelected = true
             activeSessionId = sessions[index].id
+            if let gid = sessions[index].groupId, gid != activeProjectGroupId {
+                activeProjectGroupId = gid
+            }
             startSessionIfNeeded(sessions[index].id)
             return true
         }
@@ -218,6 +507,12 @@ class SessionStore {
         if let index = sessions.firstIndex(where: { $0.id == id }) {
             sessions[index].hasBeenSelected = true
             let session = sessions[index]
+            // Follow the session into its group so the tab bar stays in sync —
+            // otherwise selecting a session from the status menu / Conductor
+            // leaves the visible tab bar showing a different group's tabs.
+            if let gid = session.groupId, gid != activeProjectGroupId {
+                activeProjectGroupId = gid
+            }
             // Auto-start if it's a plain terminal (no project) or the project is open in Xcode
             if session.projectPath == nil || activeXcodeProjects.contains(session.projectName) {
                 startSessionIfNeeded(id)
@@ -239,14 +534,24 @@ class SessionStore {
         }
     }
 
-    /// "+" button: creates a plain terminal session with no project association
+    /// "+" button: creates a plain terminal session in the currently-active group
+    /// (so the new tab shows up immediately in the visible tab bar).
     func createQuickSession() {
-        let session = TerminalSession(
+        var session = TerminalSession(
             projectName: "Terminal",
             started: true
         )
+        let groupsBefore = projectGroups.count
+        if let activeId = activeProjectGroupId,
+           projectGroups.contains(where: { $0.id == activeId }) {
+            session.groupId = activeId
+        } else {
+            session.groupId = findOrCreateGroup(for: session)
+        }
+        if projectGroups.count != groupsBefore { persistGroups() }
         sessions.append(session)
         activeSessionId = session.id
+        if activeProjectGroupId == nil { activeProjectGroupId = session.groupId }
         persistSessions()
     }
 
@@ -256,15 +561,184 @@ class SessionStore {
         persistSessions()
     }
 
+    /// Update the in-progress prompt text the user is typing into Claude's input box.
+    func updatePendingPromptText(_ id: UUID, text: String?) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        // Never wipe an existing draft on a nil scrape. The input box transiently
+        // disappears between Enter and the spinner; status detection also flakes
+        // and can misclassify .waitingForInput as .idle. Either way, a transient
+        // nil must not destroy the draft before the .working transition can
+        // freeze it as lastRequest. The freeze itself clears pendingPromptText
+        // explicitly, and a fresh scrape with text will overwrite cleanly.
+        if text == nil {
+            return
+        }
+        if sessions[index].pendingPromptText != text {
+            sessions[index].pendingPromptText = text
+        }
+    }
+
+    /// Update the scraped activity line (Claude's spinner/status line while working).
+    func updateActivityLine(_ id: UUID, line: String?) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        if sessions[index].activityLine != line {
+            sessions[index].activityLine = line
+        }
+    }
+
+    /// Update the numbered choices Claude is currently presenting, the question
+    /// line above them, and any preview content (e.g. an edit's diff body) above
+    /// the question.
+    func updatePendingChoices(_ id: UUID, choices: [PromptChoice], question: String?, preview: String?) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        if sessions[index].pendingChoices != choices {
+            sessions[index].pendingChoices = choices
+        }
+        if sessions[index].pendingQuestion != question {
+            sessions[index].pendingQuestion = question
+        }
+        if sessions[index].pendingPromptPreview != preview {
+            sessions[index].pendingPromptPreview = preview
+        }
+    }
+
+    /// Send a numbered choice to the session's terminal as if the user pressed that digit.
+    func submitChoice(_ id: UUID, number: Int) {
+        TerminalManager.shared.sendInput(to: id, text: "\(number)")
+    }
+
+    /// Toggle the per-exchange "verified" checkbox in the Conductor.
+    func setExchangeVerified(_ sessionId: UUID, exchangeId: UUID, _ value: Bool) {
+        guard let sIdx = sessions.firstIndex(where: { $0.id == sessionId }),
+              let eIdx = sessions[sIdx].exchanges.firstIndex(where: { $0.id == exchangeId }) else { return }
+        sessions[sIdx].exchanges[eIdx].verified = value
+        persistSessions()
+    }
+
+    /// Kick off an async Claude API call to summarize the task associated with
+    /// `exchangeId`. Falls back silently if no API key is configured.
+    func requestSummary(for sessionId: UUID, exchangeId: UUID) {
+        print("[summary] requestSummary session=\(sessionId) exchange=\(exchangeId)")
+        guard let sIdx = sessions.firstIndex(where: { $0.id == sessionId }),
+              let eIdx = sessions[sIdx].exchanges.firstIndex(where: { $0.id == exchangeId }) else {
+            print("[summary] session/exchange not found, aborting")
+            return
+        }
+        guard !SettingsManager.shared.anthropicAPIKey.isEmpty else {
+            print("[summary] no Anthropic API key set — marking failed")
+            sessions[sIdx].exchanges[eIdx].summaryStatus = .failed
+            return
+        }
+        guard let snapshot = TerminalManager.shared.visibleText(for: sessionId), !snapshot.isEmpty else {
+            print("[summary] visibleText returned nil/empty — marking failed")
+            sessions[sIdx].exchanges[eIdx].summaryStatus = .failed
+            return
+        }
+        let prompt = sessions[sIdx].exchanges[eIdx].prompt
+        print("[summary] firing API call: snapshot=\(snapshot.count) chars, prompt=\"\(prompt)\"")
+        sessions[sIdx].exchanges[eIdx].summaryStatus = .generating
+        sessions[sIdx].exchanges[eIdx].summary = nil
+
+        Task { @MainActor in
+            do {
+                let summary = try await SummaryService.shared.summarize(
+                    terminalOutput: snapshot,
+                    lastRequest: prompt
+                )
+                print("[summary] success: \(summary.count) chars")
+                guard let s = self.sessions.firstIndex(where: { $0.id == sessionId }),
+                      let e = self.sessions[s].exchanges.firstIndex(where: { $0.id == exchangeId }) else { return }
+                self.sessions[s].exchanges[e].summary = summary
+                self.sessions[s].exchanges[e].summaryStatus = .ready
+                self.persistSessions()
+            } catch {
+                print("[summary] failed: \(error)")
+                guard let s = self.sessions.firstIndex(where: { $0.id == sessionId }),
+                      let e = self.sessions[s].exchanges.firstIndex(where: { $0.id == exchangeId }) else { return }
+                self.sessions[s].exchanges[e].summaryStatus = .failed
+                self.persistSessions()
+            }
+        }
+    }
+
     func updateTerminalStatus(_ id: UUID, status: TerminalStatus) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+
+        // Esc was pressed: mark the in-progress exchange as interrupted+dismissed
+        // and collapse the session straight to idle so the orange "Interrupted"
+        // pill doesn't linger. Bypasses the normal transition handlers below —
+        // we don't want sleep prevention, taskCompleted delays, or summarization
+        // firing for an interrupted run.
+        if status == .interrupted {
+            if let lastIdx = sessions[index].exchanges.indices.last,
+               sessions[index].exchanges[lastIdx].completedAt == nil {
+                sessions[index].exchanges[lastIdx].completedAt = Date()
+                sessions[index].exchanges[lastIdx].wasInterrupted = true
+                sessions[index].exchanges[lastIdx].verified = true
+                sessions[index].exchanges[lastIdx].summaryStatus = .none
+                persistSessions()
+            }
+            if sessions[index].terminalStatus != .idle {
+                sessions[index].terminalStatus = .idle
+                sessions[index].activityLine = nil
+                sessions[index].workingStartedAt = nil
+                updateSleepPrevention()
+            }
+            return
+        }
+
         if sessions[index].terminalStatus != status {
             let previous = sessions[index].terminalStatus
+            print("[status] \(sessions[index].projectName): \(previous) → \(status)")
             sessions[index].terminalStatus = status
+            if status != .working {
+                sessions[index].activityLine = nil
+            }
             updateSleepPrevention()
 
             if status == .working && previous != .working {
                 sessions[index].workingStartedAt = Date()
+                // User just submitted a request — freeze the pending text as a
+                // new exchange. Don't gate on previous == .waitingForInput:
+                // status can flicker through .idle between waitingForInput and
+                // working (input box disappears briefly before the spinner shows
+                // up). The presence of pending text is what signals a real
+                // submission.
+                if let pending = sessions[index].pendingPromptText, !pending.isEmpty {
+                    if pending.trimmingCharacters(in: .whitespaces).hasPrefix("/remote-control") {
+                        print("[status] skipped /remote-control exchange: \"\(pending)\"")
+                        sessions[index].pendingPromptText = nil
+                        return
+                    }
+                    // Dedupe: the prompt-input scraper can re-pick the same text
+                    // from a buffer echo after a flicker (e.g. .working → .idle →
+                    // .working between tool calls), which would otherwise append
+                    // a phantom duplicate exchange. If the latest exchange has the
+                    // identical prompt and is recent, treat the freeze as redundant.
+                    let isDuplicate = sessions[index].exchanges.last.map { last in
+                        last.prompt == pending && Date().timeIntervalSince(last.promptAt) < 120
+                    } ?? false
+                    if isDuplicate {
+                        print("[status] skipped duplicate exchange freeze: \"\(pending)\"")
+                        sessions[index].pendingPromptText = nil
+                    } else {
+                        print("[status] pushed new exchange: \"\(pending)\"")
+                        // If the previous exchange never got summarized (user submitted
+                        // a new prompt before .taskCompleted could fire), kick off its
+                        // summary now using the buffer state from just before the new
+                        // exchange starts altering it.
+                        if let lastIdx = sessions[index].exchanges.indices.last,
+                           sessions[index].exchanges[lastIdx].summaryStatus == .none,
+                           sessions[index].exchanges[lastIdx].summary == nil {
+                            let previousExchangeId = sessions[index].exchanges[lastIdx].id
+                            sessions[index].exchanges[lastIdx].completedAt = Date()
+                            requestSummary(for: id, exchangeId: previousExchangeId)
+                        }
+                        sessions[index].exchanges.append(TaskExchange(prompt: pending))
+                        sessions[index].pendingPromptText = nil
+                        persistSessions()
+                    }
+                }
             }
             if status == .waitingForInput && previous != .waitingForInput {
                 playSound(named: "waitingForInput")
@@ -275,19 +749,27 @@ class SessionStore {
             }
             else if status == .taskCompleted && previous != .taskCompleted {
                 playSound(named: "taskCompleted")
+                // A command just finished — refresh usage if our last snapshot is
+                // older than a minute. The 5-min timer is the fallback; this is
+                // the primary trigger so the header tracks real activity.
+                UsageMonitor.shared.refreshIfStale(maxAge: 60)
+                // Attach summary to the most recent exchange (the one that just finished).
+                if let lastIdx = sessions[index].exchanges.indices.last {
+                    let exchangeId = sessions[index].exchanges[lastIdx].id
+                    sessions[index].exchanges[lastIdx].completedAt = Date()
+                    persistSessions()
+                    if sessions[index].exchanges[lastIdx].summaryStatus == .none {
+                        requestSummary(for: id, exchangeId: exchangeId)
+                    }
+                }
             }
             else if status == .idle && previous == .working {
                 // Delay 3s before treating as "task completed" — Claude sometimes
                 // goes working → idle → working again briefly.
-                let workingStartedAt = sessions[index].workingStartedAt
                 Task { @MainActor in
                     try? await Task.sleep(for: .seconds(3))
                     guard let idx = self.sessions.firstIndex(where: { $0.id == id }),
                           self.sessions[idx].terminalStatus == .idle else { return }
-                    // Only trigger taskCompleted for tasks that ran >10s
-                    if let started = workingStartedAt, Date().timeIntervalSince(started) < 10 {
-                        return
-                    }
                     SessionStore.shared.updateTerminalStatus(id, status: .taskCompleted)
                     // Auto-clear taskCompleted after 3 seconds
                     try? await Task.sleep(for: .seconds(3))

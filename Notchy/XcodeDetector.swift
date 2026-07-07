@@ -6,7 +6,11 @@ struct XcodeProject: Equatable {
     let path: String
     var directoryPath: String {
         if path.isEmpty { return NSHomeDirectory() }
-        return (path as NSString).deletingLastPathComponent
+        let dir = (path as NSString).deletingLastPathComponent
+        // A bogus path (e.g. AppleScript "missing value" leaking through) would
+        // make the terminal chdir fail silently and start in the app's cwd.
+        guard FileManager.default.fileExists(atPath: dir) else { return NSHomeDirectory() }
+        return dir
     }
 
     static func == (lhs: XcodeProject, rhs: XcodeProject) -> Bool {
@@ -52,6 +56,7 @@ class XcodeDetector {
             if (count of workspace documents) > 0 then
                 set activeDoc to front workspace document
                 set docPath to path of activeDoc
+                if docPath is missing value then set docPath to ""
                 set docName to name of activeDoc
                 return docName & "|||" & docPath
             end if
@@ -76,6 +81,7 @@ class XcodeDetector {
             repeat with doc in workspace documents
                 set docName to name of doc
                 set docPath to path of doc
+                if docPath is missing value then set docPath to ""
                 set output to output & docName & "|||" & docPath & ":::"
             end repeat
             return output
@@ -106,7 +112,10 @@ class XcodeDetector {
         let name = components[0]
             .replacingOccurrences(of: ".xcodeproj", with: "")
             .replacingOccurrences(of: ".xcworkspace", with: "")
-        let path = components[1]
+        // Older builds let AppleScript's `missing value` coerce into the string —
+        // and it's still possible if the script-side guard is bypassed.
+        var path = components[1]
+        if path == "missing value" { path = "" }
 
         return XcodeProject(name: name, path: path)
     }

@@ -8,17 +8,31 @@ class ClickThroughHostingView<Content: View>: NSHostingView<Content> {
 class TerminalPanel: NSPanel {
     private let sessionStore: SessionStore
     private static let collapsedHeight: CGFloat = 44
-    private var expandedHeight: CGFloat = 500
+    private static let defaultExpandedHeight: CGFloat = 400
+    private static let defaultWidth: CGFloat = 720
+    private static let minWidth: CGFloat = 480
+    private static let minExpandedHeight: CGFloat = 300
+    private static let savedFrameKey = "panelSavedFrame"
+    private var expandedHeight: CGFloat = defaultExpandedHeight
+    private var hasRestoredFrame = false
 
     init(sessionStore: SessionStore) {
         self.sessionStore = sessionStore
 
+        let savedFrame = Self.loadSavedFrame()
+        let initialRect = savedFrame ?? NSRect(x: 0, y: 0, width: Self.defaultWidth, height: Self.defaultExpandedHeight)
+
         super.init(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 400),
+            contentRect: initialRect,
             styleMask: [.borderless, .resizable, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered,
             defer: true
         )
+
+        if savedFrame != nil {
+            hasRestoredFrame = true
+            expandedHeight = initialRect.height
+        }
 
         isFloatingPanel = true
         level = .floating
@@ -28,7 +42,7 @@ class TerminalPanel: NSPanel {
         isOpaque = false
         animationBehavior = .none
         hidesOnDeactivate = false
-        minSize = NSSize(width: 480, height: 300)
+        minSize = NSSize(width: Self.minWidth, height: Self.minExpandedHeight)
 
         let contentView = PanelContentView(
             sessionStore: sessionStore,
@@ -65,10 +79,42 @@ class TerminalPanel: NSPanel {
             name: .NotchyExpandPanel,
             object: nil
         )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(panelFrameChanged),
+            name: NSWindow.didMoveNotification,
+            object: self
+        )
+
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(panelFrameChanged),
+            name: NSWindow.didEndLiveResizeNotification,
+            object: self
+        )
+    }
+
+    @objc private func panelFrameChanged() {
+        // Only persist while expanded — the collapsed frame has a fixed height
+        // and a shifted Y origin that we don't want to restore on next launch.
+        guard sessionStore.isTerminalExpanded else { return }
+        UserDefaults.standard.set(NSStringFromRect(frame), forKey: Self.savedFrameKey)
+        hasRestoredFrame = true
+        expandedHeight = frame.height
+    }
+
+    private static func loadSavedFrame() -> NSRect? {
+        guard let str = UserDefaults.standard.string(forKey: savedFrameKey), !str.isEmpty else { return nil }
+        let rect = NSRectFromString(str)
+        guard rect.width >= minWidth, rect.height >= minExpandedHeight else { return nil }
+        guard NSScreen.screens.contains(where: { $0.frame.intersects(rect) }) else { return nil }
+        return rect
     }
 
     func showPanel(below rect: NSRect) {
-        if let screen = NSScreen.main {
+        let targetScreen = NSScreen.screens.first { $0.frame.intersects(rect) } ?? NSScreen.main
+        if let screen = targetScreen, !hasRestoredFrame || !currentFrameIsOn(screen) {
             let panelWidth = frame.width
             let panelHeight = frame.height
             let x = rect.midX - panelWidth / 2
@@ -80,14 +126,27 @@ class TerminalPanel: NSPanel {
     }
 
     func showPanelCentered(on screen: NSScreen) {
-        let screenFrame = screen.frame
-        let panelWidth = frame.width
-        let panelHeight = frame.height
-        let x = screenFrame.midX - panelWidth / 2
-        let y = screenFrame.maxY - panelHeight
-        setFrameOrigin(NSPoint(x: x, y: y))
+        if !hasRestoredFrame || !currentFrameIsOn(screen) {
+            let screenFrame = screen.frame
+            let panelWidth = frame.width
+            let panelHeight = frame.height
+            let x = screenFrame.midX - panelWidth / 2
+            let y = screenFrame.maxY - panelHeight
+            setFrameOrigin(NSPoint(x: x, y: y))
+        }
         makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: .NotchyNotchStatusChanged, object: nil)
+    }
+
+    /// True when the majority of the panel's current frame lies on `screen`.
+    /// Used to decide whether a saved frame is still valid for the screen the
+    /// user is triggering from — after display config changes or when hovering
+    /// a different display's notch, the saved frame can be on the wrong screen.
+    private func currentFrameIsOn(_ screen: NSScreen) -> Bool {
+        let intersection = frame.intersection(screen.frame)
+        let panelArea = frame.width * frame.height
+        guard panelArea > 0 else { return false }
+        return (intersection.width * intersection.height) / panelArea >= 0.5
     }
 
     func hidePanel() {

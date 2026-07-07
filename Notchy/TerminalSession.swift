@@ -13,6 +13,66 @@ enum TerminalStatus: Equatable {
     case taskCompleted
 }
 
+enum SummaryStatus: String, Equatable, Codable {
+    case none
+    case generating
+    case ready
+    case failed
+}
+
+/// One prompt-and-response cycle inside a session: the request the user
+/// submitted, an LLM-generated summary of what Claude did, and whether the
+/// user has ticked off the work as verified.
+struct TaskExchange: Identifiable, Equatable, Codable {
+    let id: UUID
+    let prompt: String
+    let promptAt: Date
+    var completedAt: Date?
+    var summary: String?
+    var summaryStatus: SummaryStatus
+    var verified: Bool
+    /// True when the user pressed Esc during this exchange. Renders an orange
+    /// "!" badge in place of the verified checkbox.
+    var wasInterrupted: Bool
+
+    init(prompt: String, promptAt: Date = Date()) {
+        self.id = UUID()
+        self.prompt = prompt
+        self.promptAt = promptAt
+        self.completedAt = nil
+        self.summary = nil
+        self.summaryStatus = .none
+        self.verified = false
+        self.wasInterrupted = false
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, prompt, promptAt, completedAt, summary, summaryStatus, verified, wasInterrupted
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.prompt = try c.decode(String.self, forKey: .prompt)
+        self.promptAt = try c.decode(Date.self, forKey: .promptAt)
+        self.completedAt = try c.decodeIfPresent(Date.self, forKey: .completedAt)
+        self.summary = try c.decodeIfPresent(String.self, forKey: .summary)
+        self.summaryStatus = try c.decodeIfPresent(SummaryStatus.self, forKey: .summaryStatus) ?? .none
+        self.verified = try c.decodeIfPresent(Bool.self, forKey: .verified) ?? false
+        self.wasInterrupted = try c.decodeIfPresent(Bool.self, forKey: .wasInterrupted) ?? false
+    }
+}
+
+/// A numbered choice extracted from Claude's interactive prompt
+/// (e.g. "❯ 1. Yes", "  2. No"). `isSelected` reflects which option
+/// Claude's UI has highlighted with the ❯ arrow.
+struct PromptChoice: Equatable, Identifiable {
+    var id: Int { number }
+    let number: Int
+    let label: String
+    let isSelected: Bool
+}
+
 struct TerminalSession: Identifiable {
     let id: UUID
     var projectName: String
@@ -26,8 +86,33 @@ struct TerminalSession: Identifiable {
     let createdAt: Date
     /// When the session most recently entered the .working state
     var workingStartedAt: Date?
+    /// Continuously-updated snapshot of what the user is currently typing in Claude's prompt box
+    var pendingPromptText: String?
+    /// Ordered prompt/response history for this session. New exchanges are pushed
+    /// on the .working transition (when the user submits a prompt) and get their
+    /// summary filled in when the task completes.
+    var exchanges: [TaskExchange]
+    /// Live activity/spinner line scraped from the terminal while Claude is working
+    /// (e.g. "✻ Brewing… (3s · ↑ 1.2k tokens · esc to interrupt)")
+    var activityLine: String?
+    /// Numbered choices Claude is currently offering (only populated in .waitingForInput)
+    var pendingChoices: [PromptChoice]
+    /// The question line above the numbered choices (e.g. "Do you want to proceed?").
+    /// Only populated in .waitingForInput.
+    var pendingQuestion: String?
+    /// Preview content above the question — typically a diff/file header for edit
+    /// confirmations, or the body of a `WebFetch` / `Bash` command preview. Lines
+    /// are joined with `\n`. Only populated in .waitingForInput.
+    var pendingPromptPreview: String?
+    /// Project group this session belongs to. nil during migration / before
+    /// auto-assignment runs; SessionStore resolves it to a real group on first
+    /// touch via the session's git root.
+    var groupId: UUID?
 
-    init(projectName: String, projectPath: String? = nil, workingDirectory: String? = nil, started: Bool = false) {
+    /// Convenience: the prompt of the most recent exchange (for the panel "Last request" bar).
+    var lastRequest: String? { exchanges.last?.prompt }
+
+    init(projectName: String, projectPath: String? = nil, workingDirectory: String? = nil, started: Bool = false, groupId: UUID? = nil) {
         self.id = UUID()
         self.projectName = projectName
         self.projectPath = projectPath
@@ -37,19 +122,59 @@ struct TerminalSession: Identifiable {
         self.generation = 0
         self.hasBeenSelected = started // if started immediately (e.g. "+" button), mark as selected
         self.createdAt = Date()
+        self.exchanges = []
+        self.activityLine = nil
+        self.pendingChoices = []
+        self.pendingQuestion = nil
+        self.pendingPromptPreview = nil
+        self.groupId = groupId
     }
 
     /// Restore a session from persisted data
     init(persisted: PersistedSession) {
         self.id = persisted.id
         self.projectName = persisted.projectName
-        self.projectPath = persisted.projectPath
-        self.workingDirectory = persisted.workingDirectory
+        // Migrate sessions persisted by older builds where AppleScript's
+        // `missing value` leaked through as a literal path string.
+        let projectPath: String? = {
+            guard let p = persisted.projectPath, !p.isEmpty, p != "missing value" else { return nil }
+            return p
+        }()
+        self.projectPath = projectPath
+        // The project's containing directory (projectPath points at the
+        // .xcodeproj/.xcworkspace itself, so cd one level up).
+        let projectDir: String? = projectPath.flatMap { p in
+            let dir = (p as NSString).deletingLastPathComponent
+            return FileManager.default.fileExists(atPath: dir) ? dir : nil
+        }
+        // Fall back if the persisted directory is empty, no longer exists, or is
+        // "/" — a failed chdir leaves the shell in the app's own cwd (root),
+        // which OSC 7 then persisted; no real session lives at root.
+        var dir = persisted.workingDirectory
+        if dir.isEmpty || dir == "/" || !FileManager.default.fileExists(atPath: dir) {
+            dir = projectDir ?? NSHomeDirectory()
+        }
+        self.workingDirectory = dir
         self.hasStarted = false
         self.terminalStatus = .idle
         self.generation = 0
         self.hasBeenSelected = false
         self.createdAt = Date()
+        // Demote any in-flight summaries to .failed — we can't resume the API
+        // call across launches, and the terminal buffer that fed it is gone.
+        self.exchanges = persisted.exchanges.map { exchange in
+            var e = exchange
+            if e.summaryStatus == .generating {
+                e.summaryStatus = e.summary == nil ? .failed : .ready
+            }
+            return e
+        }
+        self.activityLine = nil
+        self.pendingChoices = []
+        self.pendingQuestion = nil
+        self.pendingPromptPreview = nil
+        self.pendingPromptText = persisted.pendingPromptText
+        self.groupId = persisted.groupId
     }
 }
 
@@ -59,4 +184,35 @@ struct PersistedSession: Codable {
     let projectName: String
     let projectPath: String?
     let workingDirectory: String
+    var exchanges: [TaskExchange] = []
+    /// Draft text the user was composing in Claude's input box at quit time.
+    /// Live status / choices / spinner aren't saved — they describe a dead claude process.
+    var pendingPromptText: String?
+    /// Group membership. nil for pre-grouping sessions; resolved on first load.
+    var groupId: UUID?
+
+    enum CodingKeys: String, CodingKey {
+        case id, projectName, projectPath, workingDirectory, exchanges, pendingPromptText, groupId
+    }
+
+    init(id: UUID, projectName: String, projectPath: String?, workingDirectory: String, exchanges: [TaskExchange], pendingPromptText: String?, groupId: UUID?) {
+        self.id = id
+        self.projectName = projectName
+        self.projectPath = projectPath
+        self.workingDirectory = workingDirectory
+        self.exchanges = exchanges
+        self.pendingPromptText = pendingPromptText
+        self.groupId = groupId
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try c.decode(UUID.self, forKey: .id)
+        self.projectName = try c.decode(String.self, forKey: .projectName)
+        self.projectPath = try c.decodeIfPresent(String.self, forKey: .projectPath)
+        self.workingDirectory = try c.decode(String.self, forKey: .workingDirectory)
+        self.exchanges = (try? c.decode([TaskExchange].self, forKey: .exchanges)) ?? []
+        self.pendingPromptText = try? c.decodeIfPresent(String.self, forKey: .pendingPromptText)
+        self.groupId = try? c.decodeIfPresent(UUID.self, forKey: .groupId)
+    }
 }

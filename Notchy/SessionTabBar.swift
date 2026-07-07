@@ -3,26 +3,41 @@ import UniformTypeIdentifiers
 
 struct SessionTabBar: View {
     @Bindable var sessionStore: SessionStore
-    @State private var draggedSessionId: UUID?
+    var onTabSelected: ((UUID) -> Void)? = nil
+
+    private var visibleSessions: [TerminalSession] {
+        sessionStore.sessionsInActiveGroup
+    }
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(sessionStore.sessions) { session in
+            ForEach(visibleSessions) { session in
                 SessionTab(
                     session: session,
                     isActive: session.id == sessionStore.activeSessionId,
                     terminalActive: session.hasStarted && sessionStore.activeXcodeProjects.contains(session.projectName),
                     terminalStatus: session.terminalStatus,
                     foregroundOpacity: sessionStore.isWindowFocused ? 1.0 : 0.6,
-                    isDragging: draggedSessionId == session.id,
-                    onSelect: { sessionStore.selectSession(session.id) },
+                    isDragging: sessionStore.draggedSessionId == session.id,
+                    allGroups: sessionStore.projectGroups,
+                    onSelect: {
+                        sessionStore.selectSession(session.id)
+                        onTabSelected?(session.id)
+                    },
                     onClose: { sessionStore.closeSession(session.id) },
                     onRename: { newName in
                         sessionStore.renameSession(session.id, to: newName)
+                    },
+                    onMoveToGroup: { groupId in
+                        sessionStore.moveSession(session.id, toGroup: groupId)
+                    },
+                    onMoveToNewGroup: { name in
+                        let newId = sessionStore.createGroup(named: name)
+                        sessionStore.moveSession(session.id, toGroup: newId)
                     }
                 )
                 .onDrag {
-                    draggedSessionId = session.id
+                    sessionStore.draggedSessionId = session.id
                     return NSItemProvider(object: session.id.uuidString as NSString)
                 }
                 .onDrop(
@@ -30,7 +45,7 @@ struct SessionTabBar: View {
                     delegate: SessionTabDropDelegate(
                         target: session,
                         sessions: $sessionStore.sessions,
-                        draggedSessionId: $draggedSessionId,
+                        draggedSessionId: $sessionStore.draggedSessionId,
                         onCommit: { sessionStore.persistSessionOrder() }
                     )
                 )
@@ -77,15 +92,20 @@ struct SessionTab: View {
     var terminalStatus: TerminalStatus = .idle
     var foregroundOpacity: Double = 1.0
     var isDragging: Bool = false
+    var allGroups: [ProjectGroup] = []
     let onSelect: () -> Void
     let onClose: () -> Void
     let onRename: (String) -> Void
+    var onMoveToGroup: ((UUID) -> Void)? = nil
+    var onMoveToNewGroup: ((String) -> Void)? = nil
 
     @State private var isHovering = false
     @State private var showRenameDialog = false
     @State private var renameText = ""
     @State private var latestCheckpoint: Checkpoint?
     @State private var showRestoreConfirmation = false
+    @State private var showNewGroupDialog = false
+    @State private var newGroupText = ""
 
     private var name: String { session.projectName }
 
@@ -179,6 +199,28 @@ struct SessionTab: View {
                 showRenameDialog = true
             }
 
+            if !allGroups.isEmpty || onMoveToNewGroup != nil {
+                Menu("Move to Project") {
+                    ForEach(allGroups) { group in
+                        Button {
+                            onMoveToGroup?(group.id)
+                        } label: {
+                            if group.id == session.groupId {
+                                Label(group.name, systemImage: "checkmark")
+                            } else {
+                                Text(group.name)
+                            }
+                        }
+                        .disabled(group.id == session.groupId)
+                    }
+                    if !allGroups.isEmpty { Divider() }
+                    Button("New Project…") {
+                        newGroupText = ""
+                        showNewGroupDialog = true
+                    }
+                }
+            }
+
             Button("Close", role: .destructive) {
                 onClose()
             }
@@ -212,11 +254,23 @@ struct SessionTab: View {
             }
             Button("Cancel", role: .cancel) {}
         }
+        .alert("New Project", isPresented: $showNewGroupDialog) {
+            TextField("Project name", text: $newGroupText)
+            Button("Create & Move") {
+                let trimmed = newGroupText.trimmingCharacters(in: .whitespaces)
+                guard !trimmed.isEmpty else { return }
+                onMoveToNewGroup?(trimmed)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
         .onChange(of: showRenameDialog) {
-            SessionStore.shared.isShowingDialog = showRenameDialog || showRestoreConfirmation
+            SessionStore.shared.isShowingDialog = showRenameDialog || showRestoreConfirmation || showNewGroupDialog
         }
         .onChange(of: showRestoreConfirmation) {
-            SessionStore.shared.isShowingDialog = showRenameDialog || showRestoreConfirmation
+            SessionStore.shared.isShowingDialog = showRenameDialog || showRestoreConfirmation || showNewGroupDialog
+        }
+        .onChange(of: showNewGroupDialog) {
+            SessionStore.shared.isShowingDialog = showRenameDialog || showRestoreConfirmation || showNewGroupDialog
         }
     }
 }
