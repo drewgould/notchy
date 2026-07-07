@@ -8,16 +8,41 @@
 
 /* Begin PBXBuildFile section */
 		BD0000030000000000000003 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = BD0000020000000000000002 /* SwiftTerm */; };
+		BD0000150000000000000015 /* SwiftTerm in Frameworks */ = {isa = PBXBuildFile; productRef = BD0000140000000000000014 /* SwiftTerm */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		31844E332F7210B20074F7B7 /* Notchy.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Notchy.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		BD0000100000000000000010 /* Notchy-iOS.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Notchy-iOS.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		BD0000160000000000000016 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = BD0000060000000000000006 /* Notchy-iOS */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		31844E352F7210B20074F7B7 /* Notchy */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = Notchy;
+			sourceTree = "<group>";
+		};
+		BD0000040000000000000004 /* Shared */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = Shared;
+			sourceTree = "<group>";
+		};
+		BD0000050000000000000005 /* NotchyiOS */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				BD0000160000000000000016 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
+			path = NotchyiOS;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -31,6 +56,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD0000080000000000000008 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				BD0000150000000000000015 /* SwiftTerm in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -38,6 +71,8 @@
 			isa = PBXGroup;
 			children = (
 				31844E352F7210B20074F7B7 /* Notchy */,
+				BD0000040000000000000004 /* Shared */,
+				BD0000050000000000000005 /* NotchyiOS */,
 				31844E342F7210B20074F7B7 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -46,6 +81,7 @@
 			isa = PBXGroup;
 			children = (
 				31844E332F7210B20074F7B7 /* Notchy.app */,
+				BD0000100000000000000010 /* Notchy-iOS.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -67,6 +103,7 @@
 			);
 			fileSystemSynchronizedGroups = (
 				31844E352F7210B20074F7B7 /* Notchy */,
+				BD0000040000000000000004 /* Shared */,
 			);
 			name = Notchy;
 			packageProductDependencies = (
@@ -74,6 +111,30 @@
 			);
 			productName = Notchy;
 			productReference = 31844E332F7210B20074F7B7 /* Notchy.app */;
+			productType = "com.apple.product-type.application";
+		};
+		BD0000060000000000000006 /* Notchy-iOS */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD0000110000000000000011 /* Build configuration list for PBXNativeTarget "Notchy-iOS" */;
+			buildPhases = (
+				BD0000070000000000000007 /* Sources */,
+				BD0000080000000000000008 /* Frameworks */,
+				BD0000090000000000000009 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				BD0000050000000000000005 /* NotchyiOS */,
+				BD0000040000000000000004 /* Shared */,
+			);
+			name = "Notchy-iOS";
+			packageProductDependencies = (
+				BD0000140000000000000014 /* SwiftTerm */,
+			);
+			productName = "Notchy-iOS";
+			productReference = BD0000100000000000000010 /* Notchy-iOS.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -87,6 +148,9 @@
 				LastUpgradeCheck = 2630;
 				TargetAttributes = {
 					31844E322F7210B20074F7B7 = {
+						CreatedOnToolsVersion = 26.3;
+					};
+					BD0000060000000000000006 = {
 						CreatedOnToolsVersion = 26.3;
 					};
 				};
@@ -109,6 +173,7 @@
 			projectRoot = "";
 			targets = (
 				31844E322F7210B20074F7B7 /* Notchy */,
+				BD0000060000000000000006 /* Notchy-iOS */,
 			);
 		};
 /* End PBXProject section */
@@ -121,10 +186,24 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		BD0000090000000000000009 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		31844E2F2F7210B20074F7B7 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		BD0000070000000000000007 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -334,6 +413,63 @@
 			};
 			name = Release;
 		};
+		BD0000120000000000000012 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "NotchyiOS/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.madebydrew.notchy;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		BD0000130000000000000013 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "NotchyiOS/Info.plist";
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.madebydrew.notchy;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -355,6 +491,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		BD0000110000000000000011 /* Build configuration list for PBXNativeTarget "Notchy-iOS" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BD0000120000000000000012 /* Debug */,
+				BD0000130000000000000013 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 /* End XCConfigurationList section */
 
 /* Begin XCRemoteSwiftPackageReference section */
@@ -370,6 +515,11 @@
 
 /* Begin XCSwiftPackageProductDependency section */
 		BD0000020000000000000002 /* SwiftTerm */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = BD0000010000000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
+			productName = SwiftTerm;
+		};
+		BD0000140000000000000014 /* SwiftTerm */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = BD0000010000000000000001 /* XCRemoteSwiftPackageReference "SwiftTerm" */;
 			productName = SwiftTerm;
