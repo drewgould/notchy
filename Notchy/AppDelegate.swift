@@ -16,7 +16,7 @@ private final class RemoteCreationTarget: NSObject {
     }
 }
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var statusItem: NSStatusItem!
     private var panel: TerminalPanel!
     private var notchWindow: NotchWindow?
@@ -328,6 +328,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         menu.addItem(.separator())
 
+        let pairItem = NSMenuItem(
+            title: "Pair a Device\u{2026}",
+            action: #selector(pairDevice),
+            keyEquivalent: ""
+        )
+        pairItem.target = self
+        menu.addItem(pairItem)
+
         let settingsItem = NSMenuItem(
             title: "Settings\u{2026}",
             action: #selector(openSettings),
@@ -348,6 +356,45 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
+    }
+
+    private var pairingWindow: NSWindow?
+
+    @objc private func pairDevice() {
+        if let window = pairingWindow {
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
+        }
+        MacPairingCoordinator.shared.start()
+        let hosting = NSHostingController(rootView: MacPairingView(onDone: { [weak self] in
+            self?.closePairingWindow()
+        }))
+        let window = NSWindow(contentViewController: hosting)
+        window.title = "Pair a Device"
+        window.styleMask = [.titled, .closable]
+        window.isReleasedWhenClosed = false
+        window.delegate = self
+        window.center()
+        window.level = .floating
+        pairingWindow = window
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+    }
+
+    private func closePairingWindow() {
+        MacPairingCoordinator.shared.stop()
+        let window = pairingWindow
+        pairingWindow = nil
+        window?.delegate = nil
+        window?.close()
+    }
+
+    /// Stop pairing mode if the user closes the pairing window via its title bar.
+    func windowWillClose(_ notification: Notification) {
+        guard let closing = notification.object as? NSWindow, closing === pairingWindow else { return }
+        MacPairingCoordinator.shared.stop()
+        pairingWindow = nil
     }
 
     @objc private func selectSession(_ sender: NSMenuItem) {

@@ -4,6 +4,7 @@ import SwiftUI
 /// grouped by project/machine, with the same status vocabulary as the notch.
 struct RootView: View {
     @State private var store = RemoteViewerStore.shared
+    @State private var showPairing = false
 
     var body: some View {
         NavigationStack {
@@ -15,6 +16,18 @@ struct RootView: View {
                 }
             }
             .navigationTitle("Notchy")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showPairing = true
+                    } label: {
+                        Label("Add Mac", systemImage: "plus")
+                    }
+                }
+            }
+            .sheet(isPresented: $showPairing) {
+                PairingSheet()
+            }
         }
     }
 
@@ -36,9 +49,12 @@ struct RootView: View {
 
     private var emptyState: some View {
         ContentUnavailableView {
-            Label("Looking for your Macs", systemImage: "macbook.and.iphone")
+            Label("No Macs paired yet", systemImage: "macbook.and.iphone")
         } description: {
-            Text("Make sure Notchy is running on a Mac on this Wi-Fi network, and that this iPad is paired with it.")
+            Text("Make sure Notchy is running on a Mac on this Wi-Fi network, then pair with it to mirror its sessions here.")
+        } actions: {
+            Button("Add Mac") { showPairing = true }
+                .buttonStyle(.borderedProminent)
         }
     }
 }
