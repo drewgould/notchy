@@ -24,7 +24,7 @@ struct RootView: View {
                 Section(group.name) {
                     ForEach(store.sessions(in: group)) { session in
                         NavigationLink {
-                            TerminalPlaceholderView(session: session)
+                            RemoteTerminalScreen(session: session)
                         } label: {
                             SessionRow(session: session)
                         }
@@ -113,19 +113,3 @@ struct StatusIndicator: View {
     }
 }
 
-/// Placeholder until the SwiftTerm-backed mirror terminal lands in the next step.
-struct TerminalPlaceholderView: View {
-    let session: TerminalSession
-
-    var body: some View {
-        VStack(spacing: 8) {
-            StatusIndicator(session: session).frame(height: 28)
-            Text(session.projectName).font(.headline)
-            Text("Live terminal mirror coming next")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .navigationTitle(session.projectName)
-        .navigationBarTitleDisplayMode(.inline)
-    }
-}

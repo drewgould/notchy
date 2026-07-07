@@ -9,6 +9,7 @@ import SwiftUI
 struct NotchyViewerApp: App {
     init() {
         RemoteRuntime.sink = RemoteViewerStore.shared
+        RemoteRuntime.terminalSink = TouchRemoteTerminalManager.shared
         // Viewer's whole purpose is remote — always on.
         if !SettingsManager.shared.remoteTabsEnabled {
             SettingsManager.shared.remoteTabsEnabled = true
