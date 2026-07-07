@@ -17,7 +17,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		BD0000160000000000000016 /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		BD0000160000000000000016 /* Exceptions for "NotchyiOS" folder in "Notchy-iOS" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -40,7 +40,7 @@
 		BD0000050000000000000005 /* NotchyiOS */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				BD0000160000000000000016 /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+				BD0000160000000000000016 /* Exceptions for "NotchyiOS" folder in "Notchy-iOS" target */,
 			);
 			path = NotchyiOS;
 			sourceTree = "<group>";
@@ -126,8 +126,8 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				BD0000050000000000000005 /* NotchyiOS */,
 				BD0000040000000000000004 /* Shared */,
+				BD0000050000000000000005 /* NotchyiOS */,
 			);
 			name = "Notchy-iOS";
 			packageProductDependencies = (
@@ -422,7 +422,7 @@
 				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "NotchyiOS/Info.plist";
+				INFOPLIST_FILE = NotchyiOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -451,7 +451,7 @@
 				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "NotchyiOS/Info.plist";
+				INFOPLIST_FILE = NotchyiOS/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -462,9 +462,9 @@
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

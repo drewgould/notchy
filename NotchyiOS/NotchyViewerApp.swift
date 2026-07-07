@@ -1,21 +1,26 @@
 import SwiftUI
 
-/// iOS entry point for the Notchy remote viewer. This is a bring-up stub —
-/// the real session-list / terminal UI lands next. Its only job right now is
-/// to give the iOS target an `@main` so the shared networking/model core
-/// (the `Shared/` folder) is compiled against the iOS SDK.
+/// iOS entry point for the Notchy remote viewer.
+///
+/// Wires the shared remote layer's platform seam to the iOS viewer store and
+/// turns on remote tabs so the peer manager starts advertising/browsing over
+/// the LAN. There is no `LocalTerminalHost` on iOS — this device is viewer-only.
 @main
 struct NotchyViewerApp: App {
+    init() {
+        RemoteRuntime.sink = RemoteViewerStore.shared
+        // Viewer's whole purpose is remote — always on.
+        if !SettingsManager.shared.remoteTabsEnabled {
+            SettingsManager.shared.remoteTabsEnabled = true
+        } else {
+            // Already-true doesn't re-fire the didSet that starts services.
+            RemotePeerManager.shared.start()
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
-            VStack(spacing: 8) {
-                Image(systemName: "macbook.and.iphone")
-                    .font(.system(size: 48))
-                Text("Notchy")
-                    .font(.title.bold())
-                Text("Remote viewer — bring-up")
-                    .foregroundStyle(.secondary)
-            }
+            RootView()
         }
     }
 }
