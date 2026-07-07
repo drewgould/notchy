@@ -120,7 +120,7 @@ struct PanelContentView: View {
                     // know about any.
                     Menu {
                         Button("New Session on This Mac") {
-                            sessionStore.createQuickSession()
+                            sessionStore.createLocalQuickSession()
                         }
                         let targets = SettingsManager.shared.remoteTabsEnabled ? CloudSyncManager.shared.creationTargets : []
                         if !targets.isEmpty {

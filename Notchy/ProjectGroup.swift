@@ -17,17 +17,24 @@ struct ProjectGroup: Identifiable, Equatable, Codable {
     /// `CLAUDE_CONFIG_DIR`. nil = the default `~/.claude` login. Optional so old
     /// persisted groups (which predate this field) decode cleanly to nil.
     var accountId: UUID?
-    /// Non-nil marks a synthetic group holding another Mac's remote tabs.
+    /// Non-nil marks a synthetic group mirroring one of another Mac's projects.
     /// Such groups are rebuilt from iCloud manifests each launch and are never
     /// persisted, renamed, deleted, or given an account. Optional so old
     /// persisted groups decode cleanly to nil.
     var remoteMachineId: UUID?
+    /// For synthetic remote groups: the project's name on its origin machine —
+    /// the key manifests are matched against. nil on a remote group marks the
+    /// machine-level catch-all for sessions that have no group on the worker.
+    /// For remote groups, `rootPath` is the project's path on the *worker*,
+    /// kept so a new tab created from this group targets the right directory.
+    var remoteProjectName: String?
 
-    init(id: UUID = UUID(), name: String, rootPath: String? = nil, accountId: UUID? = nil, remoteMachineId: UUID? = nil) {
+    init(id: UUID = UUID(), name: String, rootPath: String? = nil, accountId: UUID? = nil, remoteMachineId: UUID? = nil, remoteProjectName: String? = nil) {
         self.id = id
         self.name = name
         self.rootPath = rootPath
         self.accountId = accountId
         self.remoteMachineId = remoteMachineId
+        self.remoteProjectName = remoteProjectName
     }
 }

@@ -54,7 +54,8 @@ struct ProjectGroupPill: View {
                 newProjectText = ""
                 showNewProjectDialog = true
             }
-            if let active = activeGroup {
+            // Remote projects mirror another Mac — no rename/account/delete here.
+            if let active = activeGroup, active.remoteMachineId == nil {
                 Button("Rename Project…") {
                     renameText = active.name
                     renameTargetId = active.id

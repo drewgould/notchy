@@ -15,10 +15,28 @@ final class RemoteSessionCoordinator {
     func applyManifest(_ manifest: MachineManifest) {
         guard SettingsManager.shared.remoteTabsEnabled else { return }
         let store = SessionStore.shared
-        let groupId = store.findOrCreateRemoteGroup(machineId: manifest.machineId, name: manifest.name)
+        // Surface every project the machine publishes — even ones with no
+        // live sessions — so each is discoverable in the projects list.
+        var seenProjects: Set<String?> = []
+        for group in manifest.groups {
+            seenProjects.insert(group.name)
+            _ = store.findOrCreateRemoteGroup(
+                machineId: manifest.machineId,
+                machineName: manifest.name,
+                projectName: group.name,
+                rootPath: group.rootPath
+            )
+        }
         let publisherLooksAlive = Date().timeIntervalSince(manifest.lastSeen) < Self.staleWorkingCutoff
         for snapshot in manifest.sessions {
             guard !store.isRemoteSessionHidden(snapshot.id) else { continue }
+            seenProjects.insert(snapshot.groupName)
+            let groupId = store.findOrCreateRemoteGroup(
+                machineId: manifest.machineId,
+                machineName: manifest.name,
+                projectName: snapshot.groupName,
+                rootPath: nil
+            )
             var session = TerminalSession(
                 snapshot: snapshot,
                 machineId: manifest.machineId,
@@ -32,6 +50,7 @@ final class RemoteSessionCoordinator {
             store.upsertRemoteSession(session)
         }
         store.removeRemoteSessions(for: manifest.machineId, keeping: Set(manifest.sessions.map(\.id)))
+        store.pruneRemoteGroups(for: manifest.machineId, keeping: seenProjects)
     }
 
     /// Merge a live sessionList that just arrived over the network. Unlike a
@@ -40,10 +59,17 @@ final class RemoteSessionCoordinator {
     func applyLiveSessionList(machineId: UUID, machineName: String, snapshots: [SessionSnapshot]) {
         guard SettingsManager.shared.remoteTabsEnabled else { return }
         let store = SessionStore.shared
-        let groupId = store.findOrCreateRemoteGroup(machineId: machineId, name: machineName)
         let now = Date()
         for snapshot in snapshots {
             guard !store.isRemoteSessionHidden(snapshot.id) else { continue }
+            // No pruning here — only manifests carry the authoritative group
+            // list, so a live update just ensures its own groups exist.
+            let groupId = store.findOrCreateRemoteGroup(
+                machineId: machineId,
+                machineName: machineName,
+                projectName: snapshot.groupName,
+                rootPath: nil
+            )
             var session = TerminalSession(
                 snapshot: snapshot,
                 machineId: machineId,

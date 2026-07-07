@@ -286,7 +286,10 @@ class SessionStore {
     /// (created lazily on first need).
     private func findOrCreateGroup(for session: TerminalSession) -> UUID {
         if let root = gitRoot(for: session.workingDirectory) {
-            if let existing = projectGroups.first(where: { $0.rootPath == root }) {
+            // Remote groups carry *worker-side* rootPaths, which can equal a
+            // local path verbatim (same user, same checkout layout) — a local
+            // session must never be assigned to one.
+            if let existing = projectGroups.first(where: { $0.remoteMachineId == nil && $0.rootPath == root }) {
                 return existing.id
             }
             let name = (root as NSString).lastPathComponent
@@ -294,7 +297,7 @@ class SessionStore {
             projectGroups.append(group)
             return group.id
         }
-        if let other = projectGroups.first(where: { $0.rootPath == nil && $0.name == "Other" }) {
+        if let other = projectGroups.first(where: { $0.remoteMachineId == nil && $0.rootPath == nil && $0.name == "Other" }) {
             return other.id
         }
         let other = ProjectGroup(name: "Other", rootPath: nil)
@@ -570,9 +573,27 @@ class SessionStore {
         }
     }
 
-    /// "+" button: creates a plain terminal session in the currently-active group
-    /// (so the new tab shows up immediately in the visible tab bar).
+    /// "+" button: a new tab in the currently-active project. A local group
+    /// gets a plain terminal immediately; a remote project asks its machine to
+    /// create the tab, which appears once the worker's next update syncs back.
     func createQuickSession() {
+        if let activeId = activeProjectGroupId,
+           let activeGroup = projectGroups.first(where: { $0.id == activeId }),
+           let machineId = activeGroup.remoteMachineId {
+            RemoteSessionCoordinator.shared.createRemoteSession(
+                on: machineId,
+                projectName: activeGroup.remoteProjectName ?? "Terminal",
+                workingDirectory: activeGroup.rootPath ?? "~",
+                repoName: activeGroup.rootPath.map { ($0 as NSString).lastPathComponent }
+            )
+            return
+        }
+        createLocalQuickSession()
+    }
+
+    /// Creates a plain local terminal session in the currently-active group
+    /// (so the new tab shows up immediately in the visible tab bar).
+    func createLocalQuickSession() {
         var session = TerminalSession(
             projectName: "Terminal",
             started: true
@@ -1136,17 +1157,47 @@ class SessionStore {
         }
     }
 
-    /// Find or create the synthetic group that holds a remote machine's tabs.
-    func findOrCreateRemoteGroup(machineId: UUID, name: String) -> UUID {
-        if let index = projectGroups.firstIndex(where: { $0.remoteMachineId == machineId }) {
-            if projectGroups[index].name != name {
-                projectGroups[index].name = name
+    /// Find or create the synthetic group mirroring one of a remote machine's
+    /// projects. `projectName` nil is the machine-level catch-all for sessions
+    /// that have no group on the worker. `rootPath` is the worker-side path;
+    /// non-nil values refresh the stored one (session snapshots don't carry it,
+    /// so nil must not clobber what a manifest's group list already provided).
+    func findOrCreateRemoteGroup(machineId: UUID, machineName: String, projectName: String?, rootPath: String?) -> UUID {
+        let displayName = projectName.map { "\($0) (\(machineName))" } ?? machineName
+        if let index = projectGroups.firstIndex(where: {
+            $0.remoteMachineId == machineId && $0.remoteProjectName == projectName
+        }) {
+            if projectGroups[index].name != displayName {
+                projectGroups[index].name = displayName
+            }
+            if let rootPath, projectGroups[index].rootPath != rootPath {
+                projectGroups[index].rootPath = rootPath
             }
             return projectGroups[index].id
         }
-        let group = ProjectGroup(name: name, remoteMachineId: machineId)
+        let group = ProjectGroup(name: displayName, rootPath: rootPath, remoteMachineId: machineId, remoteProjectName: projectName)
         projectGroups.append(group)
         return group.id
+    }
+
+    /// Drop a machine's synthetic groups for projects that vanished from its
+    /// manifest. Groups still holding sessions are kept — a live sessionList
+    /// can be fresher than the manifest being applied.
+    func pruneRemoteGroups(for machineId: UUID, keeping projectNames: Set<String?>) {
+        let removedIds = Set(projectGroups.filter { group in
+            group.remoteMachineId == machineId
+                && !projectNames.contains(group.remoteProjectName)
+                && !sessions.contains { $0.groupId == group.id }
+        }.map(\.id))
+        guard !removedIds.isEmpty else { return }
+        projectGroups.removeAll { removedIds.contains($0.id) }
+        if let active = activeProjectGroupId, removedIds.contains(active) {
+            activeProjectGroupId = projectGroups.first?.id
+            if let gid = activeProjectGroupId,
+               let first = sessions.first(where: { $0.groupId == gid }) {
+                activeSessionId = first.id
+            }
+        }
     }
 
     /// Remove every remote session and synthetic group — used when the user
