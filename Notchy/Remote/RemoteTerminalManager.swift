@@ -64,7 +64,7 @@ class RemoteMirrorTerminalView: TerminalView {
 /// Owns the viewer-side terminal views, keyed by the REMOTE session id —
 /// mirrors TerminalManager's dictionary pattern. Also the single
 /// TerminalViewDelegate for all mirror views.
-class RemoteTerminalManager: NSObject, TerminalViewDelegate {
+class RemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTerminalSink {
     static let shared = RemoteTerminalManager()
 
     private var terminals: [UUID: RemoteMirrorTerminalView] = [:]

@@ -78,7 +78,7 @@ final class RemotePeerManager {
         peers = [:]
         pendingConnections = [:]
         discoveredEndpoints = [:]
-        for id in machineIds { SessionStore.shared.setPeerOnline(id, false) }
+        for id in machineIds { RemoteRuntime.sink?.setPeerOnline(id, false) }
     }
 
     private static func makeParameters() -> NWParameters {
@@ -194,9 +194,9 @@ final class RemotePeerManager {
     }
 
     private func peerWentOffline(_ machineId: UUID) {
-        SessionStore.shared.setPeerOnline(machineId, false)
-        TerminalMirrorHub.shared.unsubscribeAll(machineId: machineId)
-        RemoteTerminalManager.shared.peerWentOffline(machineId)
+        RemoteRuntime.sink?.setPeerOnline(machineId, false)
+        RemoteRuntime.host?.unsubscribeAllMirrors(machineId: machineId)
+        RemoteRuntime.terminalSink?.peerWentOffline(machineId)
     }
 
     private func registerPeer(_ peer: PeerConnection, hello: HelloMessage) {
@@ -235,8 +235,8 @@ final class RemotePeerManager {
         dialDelay[hello.machineId] = nil
         nextDialAttempt[hello.machineId] = nil
         print("[remote] connected to \(hello.displayName) (\(hello.machineId))")
-        SessionStore.shared.setPeerOnline(hello.machineId, true)
-        RemoteTerminalManager.shared.peerCameOnline(hello.machineId)
+        RemoteRuntime.sink?.setPeerOnline(hello.machineId, true)
+        RemoteRuntime.terminalSink?.peerCameOnline(hello.machineId)
         sendSessionList(to: peer)
     }
 
@@ -267,7 +267,7 @@ final class RemotePeerManager {
             )
         case .statusUpdate:
             guard let message = FrameCodec.decodeJSON(StatusUpdateMessage.self, from: payload) else { return }
-            SessionStore.shared.applyRemoteStatus(
+            RemoteRuntime.sink?.applyRemoteStatus(
                 message.sessionId,
                 status: message.status,
                 activityLine: message.activityLine,
@@ -283,21 +283,21 @@ final class RemotePeerManager {
             handleSubscribe(peer, machineId: machineId, sessionId: message.sessionId)
         case .unsubscribe:
             guard let message = FrameCodec.decodeJSON(SubscribeMessage.self, from: payload) else { return }
-            TerminalMirrorHub.shared.unsubscribe(machineId: machineId, sessionId: message.sessionId)
+            RemoteRuntime.host?.unsubscribeMirror(machineId: machineId, sessionId: message.sessionId)
         case .subscribeAck:
             guard let message = FrameCodec.decodeJSON(SubscribeAckMessage.self, from: payload) else { return }
-            RemoteTerminalManager.shared.handleSubscribeAck(message, from: machineId)
+            RemoteRuntime.terminalSink?.handleSubscribeAck(message, from: machineId)
         case .resize:
             guard let message = FrameCodec.decodeJSON(ResizeMessage.self, from: payload) else { return }
-            RemoteTerminalManager.shared.handleResize(message, from: machineId)
+            RemoteRuntime.terminalSink?.handleResize(message, from: machineId)
         case .sessionClosed:
             guard let message = FrameCodec.decodeJSON(SessionClosedMessage.self, from: payload) else { return }
             // The tab itself lives on via sessionList/manifests — this only
             // means the PTY died (session restart or close on the worker).
-            RemoteTerminalManager.shared.handleSessionClosed(message.sessionId, from: machineId)
+            RemoteRuntime.terminalSink?.handleSessionClosed(message.sessionId, from: machineId)
         case .termSnapshot, .termData:
             guard let (sessionId, bytes) = FrameCodec.parseBinaryPayload(payload) else { return }
-            RemoteTerminalManager.shared.handleTermData(
+            RemoteRuntime.terminalSink?.handleTermData(
                 sessionId: sessionId,
                 bytes: bytes,
                 isSnapshot: type == .termSnapshot,
@@ -305,7 +305,7 @@ final class RemotePeerManager {
             )
         case .termInput:
             guard let (sessionId, bytes) = FrameCodec.parseBinaryPayload(payload) else { return }
-            TerminalManager.shared.sendRawInput(to: sessionId, data: bytes)
+            RemoteRuntime.host?.sendRawInput(to: sessionId, data: bytes)
         case .createSessionRequest:
             guard let request = FrameCodec.decodeJSON(RemoteCreateRequest.self, from: payload) else { return }
             let sessionId = RemoteSessionCoordinator.shared.handleCreateRequest(request, fileURL: nil)
@@ -324,7 +324,7 @@ final class RemotePeerManager {
     }
 
     private func handleSubscribe(_ peer: PeerConnection, machineId: UUID, sessionId: UUID) {
-        guard let subscription = TerminalMirrorHub.shared.subscribe(machineId: machineId, sessionId: sessionId) else {
+        guard let subscription = RemoteRuntime.host?.subscribeMirror(machineId: machineId, sessionId: sessionId) else {
             let ack = SubscribeAckMessage(sessionId: sessionId, cols: 0, rows: 0, accepted: false)
             if let frame = FrameCodec.encodeJSON(.subscribeAck, ack) { peer.send(frame) }
             return
@@ -369,8 +369,8 @@ final class RemotePeerManager {
     /// Called from SessionStore's live-scrape pipeline whenever a local
     /// session's displayed state changes. Coalesced ~100ms per burst.
     func sessionDidChange(_ id: UUID) {
-        guard isRunning, !peers.isEmpty else { return }
-        guard let session = SessionStore.shared.sessions.first(where: { $0.id == id }), !session.isRemote else { return }
+        // Only a worker (a machine that owns local PTYs) broadcasts status.
+        guard isRunning, !peers.isEmpty, RemoteRuntime.host != nil else { return }
         dirtySessionIds.insert(id)
         if statusDebounce != nil { return }
         statusDebounce = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: false) { [weak self] _ in
@@ -382,21 +382,11 @@ final class RemotePeerManager {
     private func flushStatusUpdates() {
         let ids = dirtySessionIds
         dirtySessionIds = []
-        guard !peers.isEmpty else { return }
+        guard !peers.isEmpty, let host = RemoteRuntime.host else { return }
         for id in ids {
-            guard let session = SessionStore.shared.sessions.first(where: { $0.id == id }), !session.isRemote else { continue }
-            let message = StatusUpdateMessage(
-                sessionId: session.id,
-                status: session.terminalStatus,
-                activityLine: session.activityLine,
-                pendingPromptText: session.pendingPromptText,
-                pendingChoices: session.pendingChoices,
-                pendingQuestion: session.pendingQuestion,
-                pendingPromptPreview: session.pendingPromptPreview,
-                exchanges: Array(session.exchanges.suffix(20)),
-                sentAt: Date()
-            )
-            guard let frame = FrameCodec.encodeJSON(.statusUpdate, message) else { continue }
+            // statusUpdateMessage returns nil for remote/vanished sessions.
+            guard let message = host.statusUpdateMessage(for: id),
+                  let frame = FrameCodec.encodeJSON(.statusUpdate, message) else { continue }
             for peer in peers.values { peer.send(frame) }
         }
     }
@@ -413,7 +403,7 @@ final class RemotePeerManager {
     }
 
     private func sendSessionList(to peer: PeerConnection) {
-        let message = SessionListMessage(sessions: SessionStore.shared.currentSessionSnapshots())
+        let message = SessionListMessage(sessions: RemoteRuntime.host?.currentSessionSnapshots() ?? [])
         if let frame = FrameCodec.encodeJSON(.sessionList, message) {
             peer.send(frame)
         }

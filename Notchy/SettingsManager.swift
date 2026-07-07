@@ -43,7 +43,7 @@ class SettingsManager {
             } else {
                 RemotePeerManager.shared.stop()
                 CloudSyncManager.shared.stop()
-                SessionStore.shared.removeAllRemoteState()
+                RemoteRuntime.sink?.removeAllRemoteState()
             }
         }
     }

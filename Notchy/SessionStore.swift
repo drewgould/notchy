@@ -10,7 +10,7 @@ extension Notification.Name {
 }
 
 @Observable
-class SessionStore {
+class SessionStore: RemoteSessionSink {
     static let shared = SessionStore()
 
     var sessions: [TerminalSession] = []

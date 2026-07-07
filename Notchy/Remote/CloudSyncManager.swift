@@ -25,9 +25,18 @@ final class CloudSyncManager {
     private var machinesURL: URL { rootURL.appendingPathComponent("machines") }
     private var requestsURL: URL { rootURL.appendingPathComponent("requests") }
 
-    /// iCloud Drive exists on this Mac. When false every method is a no-op.
+    /// iCloud Drive exists and is reachable. When false every method is a no-op.
+    ///
+    /// iOS apps are sandboxed out of the shared `com~apple~CloudDocs` folder the
+    /// Mac publishes to, so the iPad viewer never uses the durable iCloud
+    /// channel — it discovers and trusts Macs over PIN-paired LAN instead (see
+    /// PIN pairing). Disabled here so `start()` no-ops on iOS.
     var isAvailable: Bool {
-        FileManager.default.fileExists(atPath: Self.cloudDocsPath)
+        #if os(iOS)
+        return false
+        #else
+        return FileManager.default.fileExists(atPath: Self.cloudDocsPath)
+        #endif
     }
 
     /// Last decoded manifest per remote machine — powers the "New Session on
@@ -120,13 +129,11 @@ final class CloudSyncManager {
         }
     }
 
-    /// Snapshot this Mac's local sessions. Must run on main (reads SessionStore).
+    /// Snapshot this machine's local sessions. Must run on main (the host reads
+    /// the session model). A viewer-only device has no host → empty manifest.
     private func buildManifest() -> MachineManifest {
-        let store = SessionStore.shared
-        let sessions = store.currentSessionSnapshots()
-        let groups = store.projectGroups
-            .filter { $0.remoteMachineId == nil }
-            .map { GroupSnapshot(name: $0.name, rootPath: $0.rootPath) }
+        let sessions = RemoteRuntime.host?.currentSessionSnapshots() ?? []
+        let groups = RemoteRuntime.host?.currentGroupSnapshots() ?? []
         return MachineManifest(
             machineId: MachineIdentity.id,
             name: MachineIdentity.displayName,

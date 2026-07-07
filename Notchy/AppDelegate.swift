@@ -37,6 +37,10 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private let hoverHideDelay: TimeInterval = 0.06
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Wire the remote layer's platform seams before any remote service runs.
+        RemoteRuntime.sink = SessionStore.shared
+        RemoteRuntime.host = MacTerminalHost.shared
+        RemoteRuntime.terminalSink = RemoteTerminalManager.shared
         setupStatusItem()
         setupPanel()
         if settings.showNotch {

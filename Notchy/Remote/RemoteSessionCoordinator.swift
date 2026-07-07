@@ -13,8 +13,7 @@ final class RemoteSessionCoordinator {
     /// Merge one machine's manifest into the store. `isPeerOnline` is never
     /// touched here — live-transport callbacks own that flag.
     func applyManifest(_ manifest: MachineManifest) {
-        guard SettingsManager.shared.remoteTabsEnabled else { return }
-        let store = SessionStore.shared
+        guard SettingsManager.shared.remoteTabsEnabled, let store = RemoteRuntime.sink else { return }
         // Surface every project the machine publishes — even ones with no
         // live sessions — so each is discoverable in the projects list.
         var seenProjects: Set<String?> = []
@@ -57,8 +56,7 @@ final class RemoteSessionCoordinator {
     /// manifest, this is definitionally fresh — stamp `now` so it beats any
     /// iCloud snapshot, and mark sessions online.
     func applyLiveSessionList(machineId: UUID, machineName: String, snapshots: [SessionSnapshot]) {
-        guard SettingsManager.shared.remoteTabsEnabled else { return }
-        let store = SessionStore.shared
+        guard SettingsManager.shared.remoteTabsEnabled, let store = RemoteRuntime.sink else { return }
         let now = Date()
         for snapshot in snapshots {
             guard !store.isRemoteSessionHidden(snapshot.id) else { continue }
@@ -114,18 +112,15 @@ final class RemoteSessionCoordinator {
     /// failure written back to the request file.
     @discardableResult
     func handleCreateRequest(_ request: RemoteCreateRequest, fileURL: URL?) -> UUID? {
-        let store = SessionStore.shared
+        // Only a worker can create a local session; a viewer-only device no-ops.
+        guard let host = RemoteRuntime.host else { return nil }
         let directory: String? = {
             if let dir = request.workingDirectory.map({ ($0 as NSString).expandingTildeInPath }),
                FileManager.default.fileExists(atPath: dir) {
                 return dir
             }
             if let repo = request.repoName {
-                return store.projectGroups.first { group in
-                    guard let root = group.rootPath, group.remoteMachineId == nil else { return false }
-                    return (root as NSString).lastPathComponent == repo
-                        && FileManager.default.fileExists(atPath: root)
-                }?.rootPath
+                return host.localGroupRootPath(matchingRepo: repo)
             }
             return nil
         }()
@@ -135,7 +130,7 @@ final class RemoteSessionCoordinator {
             }
             return nil
         }
-        let sessionId = store.createSession(named: request.projectName, workingDirectory: directory)
+        let sessionId = host.createLocalSession(named: request.projectName, workingDirectory: directory)
         if let fileURL {
             CloudSyncManager.shared.completeRequest(request, fileURL: fileURL, error: nil)
         }
