@@ -10,6 +10,10 @@ struct NotchyViewerApp: App {
     init() {
         RemoteRuntime.sink = RemoteViewerStore.shared
         RemoteRuntime.terminalSink = TouchRemoteTerminalManager.shared
+        // Mirror aggregate status to a Live Activity as it changes.
+        RemoteViewerStore.shared.onStatusChanged = {
+            LiveActivityController.shared.refresh()
+        }
         // Viewer's whole purpose is remote — always on.
         if !SettingsManager.shared.remoteTabsEnabled {
             SettingsManager.shared.remoteTabsEnabled = true

@@ -15,11 +15,39 @@ final class RemoteViewerStore: RemoteSessionSink {
     /// Synthetic per-machine / per-project groups rebuilt from peer state.
     var projectGroups: [ProjectGroup] = []
 
-    /// Bumped whenever aggregate status could have changed, so the Live Activity
-    /// controller can recompute. (Wired up when the Live Activity lands.)
+    /// Bumped whenever aggregate status could have changed.
     var statusRevision: Int = 0
 
+    /// Invoked (on main) after any status-affecting change — drives the Live Activity.
+    var onStatusChanged: (() -> Void)?
+
     private init() {}
+
+    private func bump() {
+        statusRevision &+= 1
+        onStatusChanged?()
+    }
+
+    // MARK: Aggregate status (mirrors the Mac notch's priority ordering)
+
+    enum AggregateStatus { case idle, working, attention, done }
+
+    /// Priority across live (online) sessions: attention > working > done > idle.
+    var aggregateStatus: AggregateStatus {
+        let live = sessions.filter { $0.isStatusLive }
+        if live.contains(where: { $0.terminalStatus == .waitingForInput }) { return .attention }
+        if live.contains(where: { $0.terminalStatus == .working }) { return .working }
+        if live.contains(where: { $0.terminalStatus == .taskCompleted }) { return .done }
+        return .idle
+    }
+
+    /// The session that best represents the current aggregate, for the activity title.
+    var representativeSession: TerminalSession? {
+        let live = sessions.filter { $0.isStatusLive }
+        return live.first { $0.terminalStatus == .waitingForInput }
+            ?? live.first { $0.terminalStatus == .working }
+            ?? live.first { $0.terminalStatus == .taskCompleted }
+    }
 
     // MARK: Grouping for the UI
 
@@ -46,7 +74,7 @@ final class RemoteViewerStore: RemoteSessionSink {
                 changed = true
             }
         }
-        if changed { statusRevision &+= 1 }
+        if changed { bump() }
     }
 
     func applyRemoteStatus(_ id: UUID,
@@ -71,7 +99,7 @@ final class RemoteViewerStore: RemoteSessionSink {
         sessions[index].workingStartedAt = (status == .working)
             ? (sessions[index].workingStartedAt ?? Date())
             : nil
-        statusRevision &+= 1
+        bump()
     }
 
     func upsertRemoteSession(_ session: TerminalSession) {
@@ -91,13 +119,13 @@ final class RemoteViewerStore: RemoteSessionSink {
         } else {
             sessions.append(session)
         }
-        statusRevision &+= 1
+        bump()
     }
 
     func removeRemoteSessions(for machineId: UUID, keeping ids: Set<UUID>) {
         let before = sessions.count
         sessions.removeAll { $0.originMachineId == machineId && !ids.contains($0.id) }
-        if sessions.count != before { statusRevision &+= 1 }
+        if sessions.count != before { bump() }
     }
 
     @discardableResult
@@ -140,6 +168,6 @@ final class RemoteViewerStore: RemoteSessionSink {
     func removeAllRemoteState() {
         sessions.removeAll()
         projectGroups.removeAll()
-        statusRevision &+= 1
+        bump()
     }
 }

@@ -48,5 +48,7 @@
 	<array>
 		<string>_notchy._tcp</string>
 	</array>
+	<key>NSSupportsLiveActivities</key>
+	<true/>
 </dict>
 </plist>
