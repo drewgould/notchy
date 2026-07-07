@@ -408,6 +408,10 @@ class ClickThroughTerminalView: LocalProcessTerminalView {
 
         guard let id = sessionId else { return }
 
+        // Mirror raw PTY output to any viewer Macs (and the backfill ring
+        // buffer). Runs on main — LocalProcess delivers here by default.
+        TerminalMirrorHub.shared.publish(sessionId: id, bytes: Data(slice))
+
         // Schedule a check 150ms after the first byte of a burst, but DON'T
         // reset the timer on every subsequent byte. Continuous data (spinner
         // animations, fast typing, paste echoes) would otherwise reschedule
@@ -598,7 +602,15 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
 
     // MARK: - LocalProcessTerminalViewDelegate
 
-    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        guard let sessionId = (source as? ClickThroughTerminalView)?.sessionId else { return }
+        RemotePeerManager.shared.broadcastResize(
+            sessionId: sessionId,
+            cols: newCols,
+            rows: newRows,
+            to: TerminalMirrorHub.shared.subscribers(for: sessionId)
+        )
+    }
 
     func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
 
@@ -635,7 +647,11 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
         return path
     }
 
-    func processTerminated(source: TerminalView, exitCode: Int32?) {}
+    func processTerminated(source: TerminalView, exitCode: Int32?) {
+        if let sessionId = (source as? ClickThroughTerminalView)?.sessionId {
+            TerminalMirrorHub.shared.sessionEnded(sessionId)
+        }
+    }
 
     /// Returns the visible text from a terminal's buffer
     func visibleText(for sessionId: UUID) -> String? {
@@ -649,8 +665,21 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
         terminals[sessionId]?.send(txt: text)
     }
 
+    /// Injects raw bytes from a viewer Mac's keyboard — same path as local
+    /// typing (TerminalView.send routes through the delegate to the process).
+    func sendRawInput(to sessionId: UUID, data: Data) {
+        terminals[sessionId]?.send(data: ArraySlice([UInt8](data)))
+    }
+
+    /// Current PTY dims for a session, for mirror subscriptions.
+    func terminalSize(for sessionId: UUID) -> (cols: Int, rows: Int)? {
+        guard let terminal = terminals[sessionId]?.getTerminal() else { return nil }
+        return (terminal.cols, terminal.rows)
+    }
+
     func destroyTerminal(for sessionId: UUID) {
         terminals.removeValue(forKey: sessionId)
+        TerminalMirrorHub.shared.sessionEnded(sessionId)
     }
 
     /// Resolves the `CLAUDE_CONFIG_DIR` for a session by walking session → group

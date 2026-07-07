@@ -270,10 +270,12 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Notchy;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Notchy detects your active Xcode project to manage terminal sessions.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Notchy connects to your other Macs on the local network to mirror terminal sessions.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -308,10 +310,12 @@
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = Notchy;
 				INFOPLIST_KEY_LSUIElement = YES;
 				INFOPLIST_KEY_NSAppleEventsUsageDescription = "Notchy detects your active Xcode project to manage terminal sessions.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Notchy connects to your other Macs on the local network to mirror terminal sessions.";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

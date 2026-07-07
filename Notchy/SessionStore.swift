@@ -192,7 +192,9 @@ class SessionStore {
     private static let persistedExchangeLimit = 50
 
     private func persistSessions() {
-        let persisted = sessions.map { session -> PersistedSession in
+        // Remote sessions are never persisted — they're rebuilt from the cached
+        // iCloud manifests at launch, which stay readable offline.
+        let persisted = sessions.filter { !$0.isRemote }.map { session -> PersistedSession in
             let trimmed = Array(session.exchanges.suffix(Self.persistedExchangeLimit))
             return PersistedSession(
                 id: session.id,
@@ -212,10 +214,36 @@ class SessionStore {
         } else {
             UserDefaults.standard.removeObject(forKey: Self.activeSessionKey)
         }
+        CloudSyncManager.shared.schedulePublish()
+        RemotePeerManager.shared.scheduleSessionListBroadcast()
+    }
+
+    /// Point-in-time snapshots of every local session — the payload shared by
+    /// the iCloud manifest and the live sessionList broadcast.
+    func currentSessionSnapshots() -> [SessionSnapshot] {
+        let groupsById = Dictionary(uniqueKeysWithValues: projectGroups.map { ($0.id, $0) })
+        return sessions.filter { !$0.isRemote }.map { session in
+            let group = session.groupId.flatMap { groupsById[$0] }
+            return SessionSnapshot(
+                id: session.id,
+                projectName: session.projectName,
+                workingDirectory: session.workingDirectory,
+                groupName: group?.name,
+                repoName: group?.rootPath.map { ($0 as NSString).lastPathComponent },
+                status: session.terminalStatus,
+                activityLine: session.activityLine,
+                pendingQuestion: session.pendingQuestion,
+                lastRequest: session.lastRequest,
+                exchanges: Array(session.exchanges.suffix(20)),
+                updatedAt: Date()
+            )
+        }
     }
 
     private func persistGroups() {
-        if let data = try? JSONEncoder().encode(projectGroups) {
+        // Synthetic per-machine groups are rebuilt from manifests each launch.
+        let localGroups = projectGroups.filter { $0.remoteMachineId == nil }
+        if let data = try? JSONEncoder().encode(localGroups) {
             UserDefaults.standard.set(data, forKey: Self.groupsKey)
         }
     }
@@ -277,7 +305,8 @@ class SessionStore {
     /// True when any session in the group is blocked waiting for user input —
     /// drives the "!" marker in the project switcher menu.
     func groupNeedsAttention(_ id: UUID) -> Bool {
-        sessions.contains { $0.groupId == id && $0.terminalStatus == .waitingForInput }
+        // isStatusLive: an offline peer's stale .waitingForInput must not nag forever.
+        sessions.contains { $0.groupId == id && $0.terminalStatus == .waitingForInput && $0.isStatusLive }
     }
 
     /// Sessions belonging to the currently-active project group. Drives the tab bar.
@@ -307,7 +336,8 @@ class SessionStore {
     }
 
     func renameGroup(_ id: UUID, to newName: String) {
-        guard let index = projectGroups.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = projectGroups.firstIndex(where: { $0.id == id }),
+              projectGroups[index].remoteMachineId == nil else { return }
         let trimmed = newName.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
         projectGroups[index].name = trimmed
@@ -319,6 +349,7 @@ class SessionStore {
     /// pick up the account's `CLAUDE_CONFIG_DIR`.
     func setAccount(_ accountId: UUID?, forGroup groupId: UUID) {
         guard let index = projectGroups.firstIndex(where: { $0.id == groupId }),
+              projectGroups[index].remoteMachineId == nil,
               projectGroups[index].accountId != accountId else { return }
         projectGroups[index].accountId = accountId
         persistGroups()
@@ -331,6 +362,7 @@ class SessionStore {
     /// otherwise the caller should reassign or close those sessions first.
     @discardableResult
     func deleteGroup(_ id: UUID) -> Bool {
+        if let group = projectGroups.first(where: { $0.id == id }), group.remoteMachineId != nil { return false }
         guard sessions.allSatisfy({ $0.groupId != id }) else { return false }
         projectGroups.removeAll { $0.id == id }
         if activeProjectGroupId == id {
@@ -348,7 +380,9 @@ class SessionStore {
     /// so the user sees where the tab went.
     func moveSession(_ sessionId: UUID, toGroup groupId: UUID) {
         guard let sIdx = sessions.firstIndex(where: { $0.id == sessionId }),
-              projectGroups.contains(where: { $0.id == groupId }) else { return }
+              !sessions[sIdx].isRemote,
+              let group = projectGroups.first(where: { $0.id == groupId }),
+              group.remoteMachineId == nil else { return }
         sessions[sIdx].groupId = groupId
         activeProjectGroupId = groupId
         activeSessionId = sessionId
@@ -368,7 +402,7 @@ class SessionStore {
     /// only the active tab's `TerminalSessionView` triggers terminal creation, so
     /// inactive tabs sit cold until clicked.
     func warmUpRestoredSessions() {
-        for session in sessions where session.hasStarted {
+        for session in sessions where session.hasStarted && !session.isRemote {
             _ = TerminalManager.shared.terminal(
                 for: session.id,
                 workingDirectory: session.workingDirectory,
@@ -448,7 +482,7 @@ class SessionStore {
 
         var groupsChanged = false
         for project in projects {
-            if let index = sessions.firstIndex(where: { $0.projectName == project.name }) {
+            if let index = sessions.firstIndex(where: { !$0.isRemote && $0.projectName == project.name }) {
                 // Heal sessions created while AppleScript reported no path
                 // (`missing value`) — adopt the real path once detection has it.
                 if !project.path.isEmpty, sessions[index].projectPath != project.path {
@@ -487,7 +521,7 @@ class SessionStore {
     func autoSwitchToProject(_ project: XcodeProject) -> Bool {
         guard dismissedProjects[project.name] == nil else { return false }
 
-        if let index = sessions.firstIndex(where: { $0.projectName == project.name }) {
+        if let index = sessions.firstIndex(where: { !$0.isRemote && $0.projectName == project.name }) {
             // Only auto-switch to tabs the user hasn't selected yet
             guard !sessions[index].hasBeenSelected else { return false }
             sessions[index].hasBeenSelected = true
@@ -513,8 +547,9 @@ class SessionStore {
             if let gid = session.groupId, gid != activeProjectGroupId {
                 activeProjectGroupId = gid
             }
-            // Auto-start if it's a plain terminal (no project) or the project is open in Xcode
-            if session.projectPath == nil || activeXcodeProjects.contains(session.projectName) {
+            // Auto-start if it's a plain terminal (no project) or the project is
+            // open in Xcode. Remote sessions never start local terminals.
+            if !session.isRemote && (session.projectPath == nil || activeXcodeProjects.contains(session.projectName)) {
                 startSessionIfNeeded(id)
             }
             // Expand terminal if collapsed when user taps a tab
@@ -528,7 +563,8 @@ class SessionStore {
 
     /// Mark session as started (terminal will be created when view renders)
     func startSessionIfNeeded(_ id: UUID) {
-        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }),
+              !sessions[index].isRemote else { return }
         if !sessions[index].hasStarted {
             sessions[index].hasStarted = true
         }
@@ -543,9 +579,12 @@ class SessionStore {
         )
         let groupsBefore = projectGroups.count
         if let activeId = activeProjectGroupId,
-           projectGroups.contains(where: { $0.id == activeId }) {
+           let activeGroup = projectGroups.first(where: { $0.id == activeId }),
+           activeGroup.remoteMachineId == nil {
             session.groupId = activeId
         } else {
+            // No active group, or it's another Mac's synthetic group — a local
+            // terminal can't live there.
             session.groupId = findOrCreateGroup(for: session)
         }
         if projectGroups.count != groupsBefore { persistGroups() }
@@ -553,6 +592,32 @@ class SessionStore {
         activeSessionId = session.id
         if activeProjectGroupId == nil { activeProjectGroupId = session.groupId }
         persistSessions()
+    }
+
+    /// Create a started session in the group matching `workingDirectory`
+    /// (found or created via git root) and warm its terminal immediately.
+    /// Used by remote create requests, which arrive while the panel may be
+    /// hidden — so unlike createQuickSession it doesn't steal the active tab.
+    @discardableResult
+    func createSession(named name: String, workingDirectory: String) -> UUID {
+        var session = TerminalSession(
+            projectName: name,
+            workingDirectory: workingDirectory,
+            started: true
+        )
+        let groupsBefore = projectGroups.count
+        session.groupId = findOrCreateGroup(for: session)
+        if projectGroups.count != groupsBefore { persistGroups() }
+        sessions.append(session)
+        if activeSessionId == nil { activeSessionId = session.id }
+        if activeProjectGroupId == nil { activeProjectGroupId = session.groupId }
+        persistSessions()
+        _ = TerminalManager.shared.terminal(
+            for: session.id,
+            workingDirectory: workingDirectory,
+            launchClaude: true
+        )
+        return session.id
     }
 
     func renameSession(_ id: UUID, to newName: String) {
@@ -575,6 +640,7 @@ class SessionStore {
         }
         if sessions[index].pendingPromptText != text {
             sessions[index].pendingPromptText = text
+            RemotePeerManager.shared.sessionDidChange(id)
         }
     }
 
@@ -583,6 +649,7 @@ class SessionStore {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
         if sessions[index].activityLine != line {
             sessions[index].activityLine = line
+            RemotePeerManager.shared.sessionDidChange(id)
         }
     }
 
@@ -591,19 +658,31 @@ class SessionStore {
     /// the question.
     func updatePendingChoices(_ id: UUID, choices: [PromptChoice], question: String?, preview: String?) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        var changed = false
         if sessions[index].pendingChoices != choices {
             sessions[index].pendingChoices = choices
+            changed = true
         }
         if sessions[index].pendingQuestion != question {
             sessions[index].pendingQuestion = question
+            changed = true
         }
         if sessions[index].pendingPromptPreview != preview {
             sessions[index].pendingPromptPreview = preview
+            changed = true
+        }
+        if changed {
+            RemotePeerManager.shared.sessionDidChange(id)
         }
     }
 
     /// Send a numbered choice to the session's terminal as if the user pressed that digit.
     func submitChoice(_ id: UUID, number: Int) {
+        if let session = sessions.first(where: { $0.id == id }), session.isRemote {
+            guard session.isPeerOnline, let machineId = session.originMachineId else { return }
+            RemotePeerManager.shared.sendTermInput(machineId: machineId, sessionId: id, bytes: Data("\(number)".utf8))
+            return
+        }
         TerminalManager.shared.sendInput(to: id, text: "\(number)")
     }
 
@@ -624,6 +703,8 @@ class SessionStore {
             print("[summary] session/exchange not found, aborting")
             return
         }
+        // Remote exchanges arrive already summarized by the worker Mac.
+        guard !sessions[sIdx].isRemote else { return }
         guard !SettingsManager.shared.anthropicAPIKey.isEmpty else {
             print("[summary] no Anthropic API key set — marking failed")
             sessions[sIdx].exchanges[eIdx].summaryStatus = .failed
@@ -663,6 +744,12 @@ class SessionStore {
 
     func updateTerminalStatus(_ id: UUID, status: TerminalStatus) {
         guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        // Defensive: only local scrapers call this today, but remote sessions
+        // must never run the transition side effects — their status arrives
+        // pre-digested via applyRemoteStatus.
+        guard !sessions[index].isRemote else { return }
+        // Whatever transition happens below, viewers should hear about it.
+        defer { RemotePeerManager.shared.sessionDidChange(id) }
 
         // Esc was pressed: mark the in-progress exchange as interrupted+dismissed
         // and collapse the session straight to idle so the orange "Interrupted"
@@ -796,7 +883,8 @@ class SessionStore {
     }
 
     private func updateSleepPrevention() {
-        let anyWorking = sessions.contains { $0.terminalStatus == .working }
+        // Only local work keeps this Mac awake — the worker holds its own assertion.
+        let anyWorking = sessions.contains { !$0.isRemote && $0.terminalStatus == .working }
         if anyWorking && sleepActivity == nil {
             sleepActivity = ProcessInfo.processInfo.beginActivity(
                 options: [.idleSystemSleepDisabled, .suddenTerminationDisabled],
@@ -892,7 +980,8 @@ class SessionStore {
     }
 
     func restartSession(_ id: UUID) {
-        guard let index = sessions.firstIndex(where: { $0.id == id }) else { return }
+        guard let index = sessions.firstIndex(where: { $0.id == id }),
+              !sessions[index].isRemote else { return }
         TerminalManager.shared.destroyTerminal(for: id)
         sessions[index].terminalStatus = .idle
         sessions[index].generation += 1
@@ -904,6 +993,11 @@ class SessionStore {
     }
 
     func closeSession(_ id: UUID) {
+        if let session = sessions.first(where: { $0.id == id }), session.isRemote {
+            // Closing a remote tab only hides it locally — never a remote kill.
+            hideRemoteSession(id)
+            return
+        }
         if let session = sessions.first(where: { $0.id == id }) {
             dismissedProjects[session.projectName] = false
         }
@@ -913,5 +1007,162 @@ class SessionStore {
             activeSessionId = sessions.first?.id
         }
         persistSessions()
+    }
+
+    // MARK: - Remote Sessions
+
+    private static let hiddenRemoteSessionsKey = "hiddenRemoteSessionIds"
+
+    /// Remote session ids the user closed locally. Skipped when manifests are
+    /// applied so the tab doesn't reappear on the next sync cycle. Capped so a
+    /// long-lived install can't grow the blob unboundedly.
+    @ObservationIgnored private lazy var hiddenRemoteSessionIds: Set<UUID> = {
+        let strings = UserDefaults.standard.stringArray(forKey: Self.hiddenRemoteSessionsKey) ?? []
+        return Set(strings.compactMap(UUID.init(uuidString:)))
+    }()
+
+    func isRemoteSessionHidden(_ id: UUID) -> Bool {
+        hiddenRemoteSessionIds.contains(id)
+    }
+
+    /// Hide a remote tab locally (the "close" action for remote sessions).
+    func hideRemoteSession(_ id: UUID) {
+        hiddenRemoteSessionIds.insert(id)
+        if hiddenRemoteSessionIds.count > 200 {
+            hiddenRemoteSessionIds = Set(hiddenRemoteSessionIds.prefix(200))
+        }
+        UserDefaults.standard.set(hiddenRemoteSessionIds.map(\.uuidString), forKey: Self.hiddenRemoteSessionsKey)
+        sessions.removeAll { $0.id == id }
+        RemoteTerminalManager.shared.destroyTerminal(for: id)
+        if activeSessionId == id {
+            activeSessionId = sessionsInActiveGroup.first?.id ?? sessions.first?.id
+        }
+    }
+
+    /// Insert or refresh a proxy session mirrored from another Mac. Preserves
+    /// local view state (selection, peer-online flag) and never lets an older
+    /// snapshot clobber fresher live data.
+    func upsertRemoteSession(_ session: TerminalSession) {
+        guard session.isRemote, !hiddenRemoteSessionIds.contains(session.id) else { return }
+        if let index = sessions.firstIndex(where: { $0.id == session.id }) {
+            guard (session.remoteLastUpdated ?? .distantPast) > (sessions[index].remoteLastUpdated ?? .distantPast) else {
+                // Snapshot is older than what we have — still adopt renames,
+                // which don't bump the status timestamp.
+                if sessions[index].projectName != session.projectName {
+                    sessions[index].projectName = session.projectName
+                }
+                return
+            }
+            var updated = session
+            updated.isPeerOnline = sessions[index].isPeerOnline
+            updated.hasBeenSelected = sessions[index].hasBeenSelected
+            sessions[index] = updated
+        } else {
+            sessions.append(session)
+        }
+    }
+
+    /// Drop this machine's remote sessions that no longer exist on the worker.
+    func removeRemoteSessions(for machineId: UUID, keeping ids: Set<UUID>) {
+        let removed = sessions.filter { $0.originMachineId == machineId && !ids.contains($0.id) }
+        guard !removed.isEmpty else { return }
+        sessions.removeAll { $0.originMachineId == machineId && !ids.contains($0.id) }
+        for session in removed {
+            RemoteTerminalManager.shared.destroyTerminal(for: session.id)
+        }
+        if let active = activeSessionId, !sessions.contains(where: { $0.id == active }) {
+            activeSessionId = sessionsInActiveGroup.first?.id ?? sessions.first?.id
+        }
+    }
+
+    /// Flip live-transport reachability for all of a machine's sessions.
+    func setPeerOnline(_ machineId: UUID, _ online: Bool) {
+        var changed = false
+        for i in sessions.indices where sessions[i].originMachineId == machineId {
+            if sessions[i].isPeerOnline != online {
+                sessions[i].isPeerOnline = online
+                changed = true
+            }
+        }
+        if changed {
+            NotificationCenter.default.post(name: .NotchyNotchStatusChanged, object: nil)
+        }
+    }
+
+    /// Apply a status update that arrived pre-digested from the session's
+    /// worker Mac. Fields are written verbatim and the user-facing reactions
+    /// fire (sound, notch refresh) — but NONE of the scraper-derived side
+    /// effects: no exchange freezing (exchanges sync from the worker), no
+    /// summarization, no sleep prevention, no taskCompleted timers.
+    func applyRemoteStatus(_ id: UUID,
+                           status: TerminalStatus,
+                           activityLine: String?,
+                           pendingPromptText: String?,
+                           pendingChoices: [PromptChoice],
+                           pendingQuestion: String?,
+                           pendingPromptPreview: String?,
+                           exchanges: [TaskExchange]?,
+                           at timestamp: Date) {
+        guard let index = sessions.firstIndex(where: { $0.id == id }),
+              sessions[index].isRemote,
+              timestamp >= (sessions[index].remoteLastUpdated ?? .distantPast) else { return }
+        let previous = sessions[index].terminalStatus
+        sessions[index].terminalStatus = status
+        sessions[index].activityLine = activityLine
+        sessions[index].pendingPromptText = pendingPromptText
+        sessions[index].pendingChoices = pendingChoices
+        sessions[index].pendingQuestion = pendingQuestion
+        sessions[index].pendingPromptPreview = pendingPromptPreview
+        if let exchanges { sessions[index].exchanges = exchanges }
+        sessions[index].remoteLastUpdated = timestamp
+        if status == .working {
+            if sessions[index].workingStartedAt == nil {
+                sessions[index].workingStartedAt = Date()
+            }
+        } else {
+            sessions[index].workingStartedAt = nil
+        }
+
+        guard status != previous else { return }
+        NotificationCenter.default.post(name: .NotchyNotchStatusChanged, object: nil)
+        // Only live peers make noise — a stale snapshot replaying an old
+        // transition shouldn't chime.
+        if sessions[index].isPeerOnline {
+            if status == .waitingForInput {
+                playSound(named: "waitingForInput")
+            } else if status == .taskCompleted {
+                playSound(named: "taskCompleted")
+            }
+        }
+    }
+
+    /// Find or create the synthetic group that holds a remote machine's tabs.
+    func findOrCreateRemoteGroup(machineId: UUID, name: String) -> UUID {
+        if let index = projectGroups.firstIndex(where: { $0.remoteMachineId == machineId }) {
+            if projectGroups[index].name != name {
+                projectGroups[index].name = name
+            }
+            return projectGroups[index].id
+        }
+        let group = ProjectGroup(name: name, remoteMachineId: machineId)
+        projectGroups.append(group)
+        return group.id
+    }
+
+    /// Remove every remote session and synthetic group — used when the user
+    /// turns the remote-tabs feature off.
+    func removeAllRemoteState() {
+        for session in sessions where session.isRemote {
+            RemoteTerminalManager.shared.destroyTerminal(for: session.id)
+        }
+        sessions.removeAll { $0.isRemote }
+        projectGroups.removeAll { $0.remoteMachineId != nil }
+        if let activeGroup = activeProjectGroupId,
+           !projectGroups.contains(where: { $0.id == activeGroup }) {
+            activeProjectGroupId = projectGroups.first?.id
+        }
+        if let active = activeSessionId, !sessions.contains(where: { $0.id == active }) {
+            activeSessionId = sessionsInActiveGroup.first?.id ?? sessions.first?.id
+        }
     }
 }

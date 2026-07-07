@@ -1,5 +1,21 @@
 import AppKit
 import SwiftUI
+
+/// NSMenuItem.representedObject payload for "New Session on <machine>" items.
+private final class RemoteCreationTarget: NSObject {
+    let machineId: UUID
+    let projectName: String
+    let workingDirectory: String?
+    let repoName: String?
+
+    init(machineId: UUID, projectName: String, workingDirectory: String?, repoName: String?) {
+        self.machineId = machineId
+        self.projectName = projectName
+        self.workingDirectory = workingDirectory
+        self.repoName = repoName
+    }
+}
+
 class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: NSStatusItem!
     private var panel: TerminalPanel!
@@ -37,12 +53,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Detect in background so launch isn't blocked
         sessionStore.detectAllXcodeProjectsAsync()
         UsageMonitor.shared.start()
+        if settings.remoteTabsEnabled {
+            CloudSyncManager.shared.start()
+            RemotePeerManager.shared.start()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         // Capture mid-typing drafts that updatePendingPromptText doesn't persist
         // on every keystroke.
         sessionStore.flushPersistence()
+        // One last manifest write so other Macs see final state promptly.
+        CloudSyncManager.shared.publishNow(waitUntilDone: true)
     }
 
     private func setupStatusItem() {
@@ -271,6 +293,35 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         newItem.target = self
         menu.addItem(newItem)
 
+        if settings.remoteTabsEnabled {
+            for manifest in CloudSyncManager.shared.creationTargets {
+                let machineItem = NSMenuItem(title: "New Session on \(manifest.name)", action: nil, keyEquivalent: "")
+                let submenu = NSMenu()
+                for group in manifest.groups where group.rootPath != nil {
+                    let item = NSMenuItem(title: group.name, action: #selector(createRemoteSession(_:)), keyEquivalent: "")
+                    item.target = self
+                    item.representedObject = RemoteCreationTarget(
+                        machineId: manifest.machineId,
+                        projectName: group.name,
+                        workingDirectory: group.rootPath,
+                        repoName: group.rootPath.map { ($0 as NSString).lastPathComponent }
+                    )
+                    submenu.addItem(item)
+                }
+                let homeItem = NSMenuItem(title: "Home Directory", action: #selector(createRemoteSession(_:)), keyEquivalent: "")
+                homeItem.target = self
+                homeItem.representedObject = RemoteCreationTarget(
+                    machineId: manifest.machineId,
+                    projectName: "Terminal",
+                    workingDirectory: "~",
+                    repoName: nil
+                )
+                submenu.addItem(homeItem)
+                machineItem.submenu = submenu
+                menu.addItem(machineItem)
+            }
+        }
+
         menu.addItem(.separator())
 
         let settingsItem = NSMenuItem(
@@ -305,6 +356,16 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         guard let groupId = sender.representedObject as? UUID else { return }
         sessionStore.selectGroup(groupId)
         showPanelBelowStatusItem()
+    }
+
+    @objc private func createRemoteSession(_ sender: NSMenuItem) {
+        guard let target = sender.representedObject as? RemoteCreationTarget else { return }
+        RemoteSessionCoordinator.shared.createRemoteSession(
+            on: target.machineId,
+            projectName: target.projectName,
+            workingDirectory: target.workingDirectory,
+            repoName: target.repoName
+        )
     }
 
     @objc private func createCheckpoint(_ sender: NSMenuItem) {

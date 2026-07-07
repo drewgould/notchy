@@ -139,6 +139,17 @@ struct IntegrationsTab: View {
                     .foregroundStyle(.secondary)
             }
             .disabled(!settings.claudeIntegrationEnabled)
+            Toggle(isOn: $settings.remoteTabsEnabled) {
+                Text("Remote tabs")
+                Text("Share this Mac's sessions (\"\(MachineIdentity.displayName)\") and show other Macs' tabs, via iCloud Drive and the local network")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if settings.remoteTabsEnabled && !CloudSyncManager.shared.isAvailable {
+                    Text("iCloud Drive not found — remote tabs can't sync on this Mac")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                }
+            }
             Section {
                 SecureField("Anthropic API key", text: $settings.anthropicAPIKey)
                     .textFieldStyle(.roundedBorder)

@@ -32,6 +32,22 @@ class SettingsManager {
         didSet { UserDefaults.standard.set(externalDisplayTrigger, forKey: "externalDisplayTrigger") }
     }
 
+    /// Remote tabs: publish this Mac's sessions (iCloud Drive + local network)
+    /// and mirror other Macs' sessions as remote tabs.
+    var remoteTabsEnabled: Bool {
+        didSet {
+            UserDefaults.standard.set(remoteTabsEnabled, forKey: "remoteTabsEnabled")
+            if remoteTabsEnabled {
+                CloudSyncManager.shared.start()
+                RemotePeerManager.shared.start()
+            } else {
+                RemotePeerManager.shared.stop()
+                CloudSyncManager.shared.stop()
+                SessionStore.shared.removeAllRemoteState()
+            }
+        }
+    }
+
     /// Anthropic API key used by SummaryService to generate "next steps" summaries
     /// when a Claude Code task completes. Stored in UserDefaults for now.
     var anthropicAPIKey: String {
@@ -63,6 +79,7 @@ class SettingsManager {
         claudeIntegrationEnabled = defaults.bool(forKey: "claudeIntegrationEnabled")
         claudeAutoModeEnabled = defaults.bool(forKey: "claudeAutoModeEnabled")
         externalDisplayTrigger = defaults.bool(forKey: "externalDisplayTrigger")
+        remoteTabsEnabled = defaults.bool(forKey: "remoteTabsEnabled")
         anthropicAPIKey = defaults.string(forKey: "anthropicAPIKey") ?? ""
 
         if let data = defaults.data(forKey: Self.accountsKey),

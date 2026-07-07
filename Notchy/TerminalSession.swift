@@ -1,6 +1,6 @@
 import Foundation
 
-enum TerminalStatus: Equatable {
+nonisolated enum TerminalStatus: String, Equatable, Codable {
     /// Default — no special activity detected
     case idle
     /// Claude is working (status line matches token counter pattern)
@@ -13,7 +13,7 @@ enum TerminalStatus: Equatable {
     case taskCompleted
 }
 
-enum SummaryStatus: String, Equatable, Codable {
+nonisolated enum SummaryStatus: String, Equatable, Codable {
     case none
     case generating
     case ready
@@ -23,7 +23,7 @@ enum SummaryStatus: String, Equatable, Codable {
 /// One prompt-and-response cycle inside a session: the request the user
 /// submitted, an LLM-generated summary of what Claude did, and whether the
 /// user has ticked off the work as verified.
-struct TaskExchange: Identifiable, Equatable, Codable {
+nonisolated struct TaskExchange: Identifiable, Equatable, Codable {
     let id: UUID
     let prompt: String
     let promptAt: Date
@@ -66,7 +66,7 @@ struct TaskExchange: Identifiable, Equatable, Codable {
 /// A numbered choice extracted from Claude's interactive prompt
 /// (e.g. "❯ 1. Yes", "  2. No"). `isSelected` reflects which option
 /// Claude's UI has highlighted with the ❯ arrow.
-struct PromptChoice: Equatable, Identifiable {
+nonisolated struct PromptChoice: Equatable, Identifiable, Codable {
     var id: Int { number }
     let number: Int
     let label: String
@@ -108,6 +108,26 @@ struct TerminalSession: Identifiable {
     /// auto-assignment runs; SessionStore resolves it to a real group on first
     /// touch via the session's git root.
     var groupId: UUID?
+
+    // MARK: Remote-tab support
+
+    /// Machine that owns the real terminal. nil = this Mac (local session).
+    var originMachineId: UUID? = nil
+    /// Display name of the origin machine, for badges and placeholders.
+    var originMachineName: String? = nil
+    /// Live-transport reachability of the origin machine. Meaningless for local sessions.
+    var isPeerOnline: Bool = false
+    /// Timestamp of the newest remote data applied to this session. Live network
+    /// updates stamp `Date()`; iCloud snapshots carry the worker's `updatedAt` —
+    /// an older snapshot must never clobber fresher network state.
+    var remoteLastUpdated: Date? = nil
+
+    /// True when the real terminal lives on another Mac.
+    var isRemote: Bool { originMachineId != nil }
+    /// Remote tab whose peer is unreachable — render grayed, status is last-known.
+    var isStale: Bool { isRemote && !isPeerOnline }
+    /// Sessions whose status should drive notch/sound/attention aggregates.
+    var isStatusLive: Bool { !isRemote || isPeerOnline }
 
     /// Convenience: the prompt of the most recent exchange (for the panel "Last request" bar).
     var lastRequest: String? { exchanges.last?.prompt }
@@ -175,6 +195,34 @@ struct TerminalSession: Identifiable {
         self.pendingPromptPreview = nil
         self.pendingPromptText = persisted.pendingPromptText
         self.groupId = persisted.groupId
+    }
+
+    /// Build a proxy session for a tab that lives on another Mac.
+    /// `projectPath` stays nil deliberately — every checkpoint path guards on
+    /// it, so remote sessions are naturally inert there. `hasStarted` stays
+    /// false so no local terminal ever spawns.
+    init(snapshot: SessionSnapshot, machineId: UUID, machineName: String, groupId: UUID) {
+        self.id = snapshot.id
+        self.projectName = snapshot.projectName
+        self.projectPath = nil
+        self.workingDirectory = snapshot.workingDirectory
+        self.hasStarted = false
+        self.terminalStatus = snapshot.status
+        self.generation = 0
+        self.hasBeenSelected = false
+        self.createdAt = Date()
+        self.workingStartedAt = nil
+        self.exchanges = snapshot.exchanges
+        self.activityLine = snapshot.activityLine
+        self.pendingChoices = []
+        self.pendingQuestion = snapshot.pendingQuestion
+        self.pendingPromptPreview = nil
+        self.pendingPromptText = nil
+        self.groupId = groupId
+        self.originMachineId = machineId
+        self.originMachineName = machineName
+        self.isPeerOnline = false
+        self.remoteLastUpdated = snapshot.updatedAt
     }
 }
 

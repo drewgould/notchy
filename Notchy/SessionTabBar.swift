@@ -117,6 +117,18 @@ struct SessionTab: View {
 
     @ViewBuilder
     private var statusIndicator: some View {
+        if session.isStale {
+            // Peer offline — last-known status isn't live, render neutral.
+            Circle()
+                .fill(Color.gray.opacity(0.4))
+                .frame(width: 6, height: 6)
+        } else {
+            liveStatusIndicator
+        }
+    }
+
+    @ViewBuilder
+    private var liveStatusIndicator: some View {
         switch terminalStatus {
         case .working:
             TabSpinnerView()
@@ -138,6 +150,12 @@ struct SessionTab: View {
 
     var body: some View {
         HStack(spacing: 4) {
+            if session.isRemote {
+                Image(systemName: "macbook")
+                    .font(.system(size: 8))
+                    .foregroundColor(.white.opacity(session.isStale ? 0.3 : 0.6))
+            }
+
             statusIndicator
 
             ZStack {
@@ -165,7 +183,7 @@ struct SessionTab: View {
             RoundedRectangle(cornerRadius: 6)
                 .stroke(isActive ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
         )
-        .opacity(isDragging ? 0.4 : 1.0)
+        .opacity(isDragging ? 0.4 : (session.isStale ? 0.5 : 1.0))
         .onHover { hovering in
             isHovering = hovering
             if hovering {
@@ -194,35 +212,43 @@ struct SessionTab: View {
 //                SessionStore.shared.restartSession(session.id)
 //            }
 
-            Button("Rename Tab") {
-                renameText = name
-                showRenameDialog = true
-            }
+            if session.isRemote {
+                // Remote tabs live on another Mac — hiding is the only local
+                // action; rename/move/close belong to the worker.
+                Button("Hide Tab") {
+                    onClose()
+                }
+            } else {
+                Button("Rename Tab") {
+                    renameText = name
+                    showRenameDialog = true
+                }
 
-            if !allGroups.isEmpty || onMoveToNewGroup != nil {
-                Menu("Move to Project") {
-                    ForEach(allGroups) { group in
-                        Button {
-                            onMoveToGroup?(group.id)
-                        } label: {
-                            if group.id == session.groupId {
-                                Label(group.name, systemImage: "checkmark")
-                            } else {
-                                Text(group.name)
+                if !allGroups.isEmpty || onMoveToNewGroup != nil {
+                    Menu("Move to Project") {
+                        ForEach(allGroups.filter { $0.remoteMachineId == nil }) { group in
+                            Button {
+                                onMoveToGroup?(group.id)
+                            } label: {
+                                if group.id == session.groupId {
+                                    Label(group.name, systemImage: "checkmark")
+                                } else {
+                                    Text(group.name)
+                                }
                             }
+                            .disabled(group.id == session.groupId)
                         }
-                        .disabled(group.id == session.groupId)
-                    }
-                    if !allGroups.isEmpty { Divider() }
-                    Button("New Project…") {
-                        newGroupText = ""
-                        showNewGroupDialog = true
+                        Divider()
+                        Button("New Project…") {
+                            newGroupText = ""
+                            showNewGroupDialog = true
+                        }
                     }
                 }
-            }
 
-            Button("Close", role: .destructive) {
-                onClose()
+                Button("Close", role: .destructive) {
+                    onClose()
+                }
             }
         }
         .onAppear {

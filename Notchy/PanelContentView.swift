@@ -115,15 +115,52 @@ struct PanelContentView: View {
                 .padding(.trailing, -4)
 
                 ZStack {
-                    Button(action: { sessionStore.createQuickSession() }) {
+                    // Click keeps the old behavior (local session); the
+                    // pulldown offers creation on other Macs when remote tabs
+                    // know about any.
+                    Menu {
+                        Button("New Session on This Mac") {
+                            sessionStore.createQuickSession()
+                        }
+                        let targets = SettingsManager.shared.remoteTabsEnabled ? CloudSyncManager.shared.creationTargets : []
+                        if !targets.isEmpty {
+                            Divider()
+                            ForEach(targets, id: \.machineId) { manifest in
+                                Menu("New Session on \(manifest.name)") {
+                                    ForEach(manifest.groups.filter { $0.rootPath != nil }, id: \.name) { group in
+                                        Button(group.name) {
+                                            RemoteSessionCoordinator.shared.createRemoteSession(
+                                                on: manifest.machineId,
+                                                projectName: group.name,
+                                                workingDirectory: group.rootPath,
+                                                repoName: group.rootPath.map { ($0 as NSString).lastPathComponent }
+                                            )
+                                        }
+                                    }
+                                    Button("Home Directory") {
+                                        RemoteSessionCoordinator.shared.createRemoteSession(
+                                            on: manifest.machineId,
+                                            projectName: "Terminal",
+                                            workingDirectory: "~",
+                                            repoName: nil
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    } label: {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .medium))
                             .frame(width: 28, height: 28)
                             .contentShape(Rectangle())
+                    } primaryAction: {
+                        sessionStore.createQuickSession()
                     }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
                     .buttonStyle(.plain)
                     .foregroundColor(.white.opacity(foregroundOpacity))
-                    .help("New session")
+                    .help("New session (hold for remote Macs)")
                 }
                 .padding(.leading, -4)
                 .padding(.trailing, -10)
@@ -207,7 +244,15 @@ struct PanelContentView: View {
                         showConductor = false
                     })
                 } else if let session = sessionStore.activeSession {
-                    if session.hasStarted {
+                    if session.isRemote {
+                        if session.isPeerOnline, let machineId = session.originMachineId {
+                            RemoteTerminalSessionView(sessionId: session.id, machineId: machineId)
+                        } else {
+                            remotePlaceholderView(
+                                "\(session.originMachineName ?? "Remote Mac") is offline\nShowing last known status"
+                            )
+                        }
+                    } else if session.hasStarted {
                         TerminalSessionView(
                             sessionId: session.id,
                             workingDirectory: session.workingDirectory,
@@ -315,6 +360,23 @@ struct PanelContentView: View {
                     .foregroundColor(.secondary)
                     .multilineTextAlignment(.center)
                     .opacity(0)
+            }
+    }
+
+    /// Unlike `placeholderView`, the message is actually visible — a remote
+    /// tab with no terminal needs to explain itself.
+    private func remotePlaceholderView(_ message: String) -> some View {
+        Color(nsColor: NSColor(white: 0.1, alpha: 1.0))
+            .overlay {
+                VStack(spacing: 10) {
+                    Image(systemName: "macbook")
+                        .font(.system(size: 24))
+                        .foregroundColor(.white.opacity(0.3))
+                    Text(message)
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                }
             }
     }
 }
