@@ -36,10 +36,15 @@ struct RootView: View {
             ForEach(store.populatedGroups) { group in
                 Section(group.name) {
                     ForEach(store.sessions(in: group)) { session in
-                        NavigationLink {
-                            RemoteTerminalScreen(session: session)
-                        } label: {
-                            SessionRow(session: session)
+                        if let machineId = session.originMachineId {
+                            NavigationLink {
+                                RemoteTerminalScreen(
+                                    sessionId: session.id,
+                                    machineId: machineId,
+                                    title: session.projectName)
+                            } label: {
+                                SessionRow(session: session)
+                            }
                         }
                     }
                 }

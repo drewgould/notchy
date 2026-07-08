@@ -32,13 +32,25 @@ final class PairingModel {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    private var timeoutTask: Task<Void, Never>?
+
     func pair(_ mac: DiscoveredMac, pin: String, onSuccess: @escaping () -> Void) {
         state = .pairing
         RemotePeerManager.shared.onPairingSucceeded = { [weak self] _, _ in
+            self?.timeoutTask?.cancel()
             self?.state = .idle
             onSuccess()
         }
         RemotePeerManager.shared.startPairing(machineId: mac.machineId, pin: pin)
+        // The Mac silently ignores our request if it isn't in pairing mode (or
+        // the code is wrong and no failure is signalled) — don't spin forever.
+        timeoutTask?.cancel()
+        timeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(15))
+            guard !Task.isCancelled, let self, self.state == .pairing else { return }
+            RemotePeerManager.shared.cancelPairing(machineId: mac.machineId)
+            self.state = .failed
+        }
     }
 }
 
