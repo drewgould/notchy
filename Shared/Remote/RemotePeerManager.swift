@@ -266,6 +266,9 @@ final class RemotePeerManager {
     /// Promote a connection to a trusted peer: resolve simultaneous dials, wire
     /// it into `peers`, and kick off the session-list exchange.
     private func completeTrustedRegistration(_ peer: PeerConnection, machineId: UUID, name: String) {
+        // Paired peers get an encrypted channel; iCloud-trusted Macs stay plaintext.
+        // Set before any post-trust frame (e.g. the session list below) is sent.
+        peer.encryptionKey = PairingManager.shared.key(for: machineId)
         pairingCandidates.removeValue(forKey: machineId)
 
         if let existing = peers[machineId], existing !== peer {
