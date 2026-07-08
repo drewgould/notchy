@@ -36,6 +36,8 @@ final class TouchRemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTe
 
     private var terminals: [UUID: MirrorTerminalView] = [:]
     private var machineForSession: [UUID: UUID] = [:]
+    /// Debounces resize requests so rotation / keyboard changes don't storm the worker.
+    private var resizeWork: [UUID: DispatchWorkItem] = [:]
 
     func terminal(for sessionId: UUID, machineId: UUID) -> MirrorTerminalView {
         if let existing = terminals[sessionId] { return existing }
@@ -55,8 +57,23 @@ final class TouchRemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTe
         if let machineId = machineForSession[sessionId] {
             RemotePeerManager.shared.unsubscribe(machineId: machineId, sessionId: sessionId)
         }
+        resizeWork[sessionId]?.cancel()
+        resizeWork.removeValue(forKey: sessionId)
         terminals.removeValue(forKey: sessionId)?.removeFromSuperview()
         machineForSession.removeValue(forKey: sessionId)
+    }
+
+    /// Ask the worker to size its PTY to the grid this device's terminal just
+    /// computed for its own screen. Debounced.
+    private func scheduleResizeRequest(machineId: UUID, sessionId: UUID, cols: Int, rows: Int) {
+        guard cols > 0, rows > 0 else { return }
+        resizeWork[sessionId]?.cancel()
+        let work = DispatchWorkItem {
+            RemotePeerManager.shared.sendResizeRequest(
+                machineId: machineId, sessionId: sessionId, cols: cols, rows: rows)
+        }
+        resizeWork[sessionId] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25, execute: work)
     }
 
     /// Send raw bytes (used by the key-accessory bar) — routes through the same
@@ -89,15 +106,10 @@ final class TouchRemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTe
         applyRemoteSize(sessionId: message.sessionId, cols: message.cols, rows: message.rows, from: machineId)
     }
 
-    /// The worker's PTY size is authoritative; adopt its cols/rows and let the
-    /// container letterbox the resulting fixed-size frame.
-    private func applyRemoteSize(sessionId: UUID, cols: Int, rows: Int, from machineId: UUID) {
-        guard machineForSession[sessionId] == machineId,
-              let view = terminals[sessionId], cols > 0, rows > 0 else { return }
-        view.resize(cols: cols, rows: rows)
-        view.frame.size = view.getOptimalFrameSize().size
-        view.superview?.setNeedsLayout()
-    }
+    /// This device drives its own size (the terminal fills the screen and its
+    /// grid is pushed to the worker via resizeRequest), so the worker's echoed
+    /// dims are ignored — adopting them would fight the fill and oscillate.
+    private func applyRemoteSize(sessionId: UUID, cols: Int, rows: Int, from machineId: UUID) {}
 
     func handleSessionClosed(_ sessionId: UUID, from machineId: UUID) {
         guard machineForSession[sessionId] == machineId else { return }
@@ -114,7 +126,12 @@ final class TouchRemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTe
     }
 
     func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
-        // Viewer never dictates size — the worker's PTY is authoritative.
+        // The terminal filled our screen and computed this grid — push it to the
+        // worker so its PTY (and thus Claude's TUI) matches this device exactly.
+        guard let view = source as? MirrorTerminalView,
+              let sessionId = view.remoteSessionId,
+              let machineId = machineForSession[sessionId] else { return }
+        scheduleResizeRequest(machineId: machineId, sessionId: sessionId, cols: newCols, rows: newRows)
     }
 
     func setTerminalTitle(source: TerminalView, title: String) {}

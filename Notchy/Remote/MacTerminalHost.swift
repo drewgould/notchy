@@ -22,6 +22,17 @@ final class MacTerminalHost: LocalTerminalHost {
         TerminalManager.shared.sendRawInput(to: sessionId, data: data)
     }
 
+    func applyViewerResize(sessionId: UUID, cols: Int, rows: Int) {
+        let c = max(20, min(500, cols))
+        let r = max(5, min(200, rows))
+        TerminalManager.shared.applyRemoteResize(sessionId: sessionId, cols: c, rows: r)
+    }
+
+    func restoreNaturalSizeIfUnwatched(sessionId: UUID) {
+        guard TerminalMirrorHub.shared.subscribers(for: sessionId).isEmpty else { return }
+        TerminalManager.shared.restoreNaturalSize(sessionId: sessionId)
+    }
+
     func currentSessionSnapshots() -> [SessionSnapshot] {
         SessionStore.shared.currentSessionSnapshots()
     }

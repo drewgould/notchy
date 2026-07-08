@@ -671,6 +671,22 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
         terminals[sessionId]?.send(data: ArraySlice([UInt8](data)))
     }
 
+    /// Force this session's PTY grid to a viewer's requested dims (SIGWINCH to
+    /// the child). Only called while a remote viewer is driving the size.
+    func applyRemoteResize(sessionId: UUID, cols: Int, rows: Int) {
+        guard let terminal = terminals[sessionId] else { return }
+        let current = terminal.getTerminal()
+        guard current.cols != cols || current.rows != rows else { return }
+        terminal.resize(cols: cols, rows: rows)
+    }
+
+    /// Restore a session's grid to whatever its own view frame implies — undoes
+    /// a viewer-driven resize once the viewer detaches.
+    func restoreNaturalSize(sessionId: UUID) {
+        guard let terminal = terminals[sessionId] else { return }
+        terminal.setFrameSize(terminal.frame.size)  // re-derives cols/rows from frame
+    }
+
     /// Current PTY dims for a session, for mirror subscriptions.
     func terminalSize(for sessionId: UUID) -> (cols: Int, rows: Int)? {
         guard let terminal = terminals[sessionId]?.getTerminal() else { return nil }

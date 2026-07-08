@@ -28,6 +28,8 @@ nonisolated enum RemoteMessageType: UInt8 {
     case createSessionRequest = 0x0B
     case createSessionResponse = 0x0C
     case sessionClosed = 0x0D
+    /// Viewer → worker: please size the PTY to these dims (viewer-driven sizing).
+    case resizeRequest = 0x0E
     /// Binary. Full-reset + ring-buffer backfill on subscribe.
     case termSnapshot = 0x10
     /// Binary. Live PTY output.

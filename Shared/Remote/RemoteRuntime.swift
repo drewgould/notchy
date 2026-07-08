@@ -61,6 +61,14 @@ protocol LocalTerminalHost: AnyObject {
     /// Inject a viewer's keystrokes into a local session's PTY.
     func sendRawInput(to sessionId: UUID, data: Data)
 
+    /// A viewer asked to drive this local session's grid — resize the PTY to
+    /// the requested dims (clamped). Only ever called in response to a viewer;
+    /// with no viewer attached the local terminal sizes itself as usual.
+    func applyViewerResize(sessionId: UUID, cols: Int, rows: Int)
+    /// Restore a local session's natural (window-derived) grid once no viewer
+    /// is driving it any longer.
+    func restoreNaturalSizeIfUnwatched(sessionId: UUID)
+
     /// Snapshots of this machine's local sessions / groups for manifests and
     /// session-list broadcasts.
     func currentSessionSnapshots() -> [SessionSnapshot]

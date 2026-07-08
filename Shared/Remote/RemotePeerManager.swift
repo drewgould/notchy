@@ -339,12 +339,18 @@ final class RemotePeerManager {
         case .unsubscribe:
             guard let message = FrameCodec.decodeJSON(SubscribeMessage.self, from: payload) else { return }
             RemoteRuntime.host?.unsubscribeMirror(machineId: machineId, sessionId: message.sessionId)
+            // A viewer that was driving the size just left — restore natural dims.
+            RemoteRuntime.host?.restoreNaturalSizeIfUnwatched(sessionId: message.sessionId)
         case .subscribeAck:
             guard let message = FrameCodec.decodeJSON(SubscribeAckMessage.self, from: payload) else { return }
             RemoteRuntime.terminalSink?.handleSubscribeAck(message, from: machineId)
         case .resize:
             guard let message = FrameCodec.decodeJSON(ResizeMessage.self, from: payload) else { return }
             RemoteRuntime.terminalSink?.handleResize(message, from: machineId)
+        case .resizeRequest:
+            // A viewer wants this worker's PTY sized to fit its screen.
+            guard let message = FrameCodec.decodeJSON(ResizeMessage.self, from: payload) else { return }
+            RemoteRuntime.host?.applyViewerResize(sessionId: message.sessionId, cols: message.cols, rows: message.rows)
         case .sessionClosed:
             guard let message = FrameCodec.decodeJSON(SessionClosedMessage.self, from: payload) else { return }
             // The tab itself lives on via sessionList/manifests — this only
@@ -599,6 +605,14 @@ final class RemotePeerManager {
 
     func sendTermInput(machineId: UUID, sessionId: UUID, bytes: Data) {
         peers[machineId]?.send(FrameCodec.encodeBinary(.termInput, sessionId: sessionId, bytes: bytes))
+    }
+
+    /// Viewer → worker: ask the worker to size this session's PTY to `cols`×`rows`
+    /// so the mirror fits this device's screen.
+    func sendResizeRequest(machineId: UUID, sessionId: UUID, cols: Int, rows: Int) {
+        guard let peer = peers[machineId],
+              let frame = FrameCodec.encodeJSON(.resizeRequest, ResizeMessage(sessionId: sessionId, cols: cols, rows: rows)) else { return }
+        peer.send(frame)
     }
 
     /// Fan out live PTY output to a session's subscribers. Called by
