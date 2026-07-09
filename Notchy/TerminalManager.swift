@@ -403,10 +403,15 @@ class ClickThroughTerminalView: LocalProcessTerminalView {
         return content
     }
 
+    private var diagFirstData = true
     override func dataReceived(slice: ArraySlice<UInt8>) {
         super.dataReceived(slice: slice)
 
         guard let id = sessionId else { return }
+        if diagFirstData {
+            diagFirstData = false
+            NSLog("[NOTCHY-DIAG] FIRST dataReceived session=\(id) bytes=\(slice.count)")
+        }
 
         // Mirror raw PTY output to any viewer Macs (and the backfill ring
         // buffer). Runs on main — LocalProcess delivers here by default.
@@ -555,8 +560,10 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
 
     func terminal(for sessionId: UUID, workingDirectory: String, launchClaude: Bool = true) -> LocalProcessTerminalView {
         if let existing = terminals[sessionId] {
+            NSLog("[NOTCHY-DIAG] terminal(for:) RETURN CACHED session=\(sessionId)")
             return existing
         }
+        NSLog("[NOTCHY-DIAG] terminal(for:) CREATE session=\(sessionId) wd=\(workingDirectory) launchClaude=\(launchClaude)")
 
         let terminal = ClickThroughTerminalView(frame: NSRect(x: 0, y: 0, width: 720, height: 460))
         terminal.sessionId = sessionId
@@ -587,6 +594,8 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
             execName: "-" + (shell as NSString).lastPathComponent,
             currentDirectory: startDirectory
         )
+        let t = terminal.getTerminal()
+        NSLog("[NOTCHY-DIAG] startProcess DONE session=\(sessionId) shell=\(shell) dir=\(startDirectory) cols=\(t.cols) rows=\(t.rows) frame=\(terminal.frame)")
 
         // Launch claude only if CLAUDE.md exists and integration is enabled.
         // Queued until the first OSC 7 cwd report (= first prompt) for the same reason.
@@ -648,6 +657,7 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
     }
 
     func processTerminated(source: TerminalView, exitCode: Int32?) {
+        NSLog("[NOTCHY-DIAG] processTerminated session=\((source as? ClickThroughTerminalView)?.sessionId?.uuidString ?? "nil") exit=\(exitCode.map(String.init) ?? "nil")")
         if let sessionId = (source as? ClickThroughTerminalView)?.sessionId {
             TerminalMirrorHub.shared.sessionEnded(sessionId)
         }
@@ -669,6 +679,22 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
     /// typing (TerminalView.send routes through the delegate to the process).
     func sendRawInput(to sessionId: UUID, data: Data) {
         terminals[sessionId]?.send(data: ArraySlice([UInt8](data)))
+    }
+
+    /// Force this session's PTY grid to a viewer's requested dims (SIGWINCH to
+    /// the child). Only called while a remote viewer is driving the size.
+    func applyRemoteResize(sessionId: UUID, cols: Int, rows: Int) {
+        guard let terminal = terminals[sessionId] else { return }
+        let current = terminal.getTerminal()
+        guard current.cols != cols || current.rows != rows else { return }
+        terminal.resize(cols: cols, rows: rows)
+    }
+
+    /// Restore a session's grid to whatever its own view frame implies — undoes
+    /// a viewer-driven resize once the viewer detaches.
+    func restoreNaturalSize(sessionId: UUID) {
+        guard let terminal = terminals[sessionId] else { return }
+        terminal.setFrameSize(terminal.frame.size)  // re-derives cols/rows from frame
     }
 
     /// Current PTY dims for a session, for mirror subscriptions.

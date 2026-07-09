@@ -1,4 +1,7 @@
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 /// Stable identity for this Mac across launches. Every remote-tabs component —
 /// iCloud manifests, Bonjour TXT records, create-request targeting — keys off
@@ -23,12 +26,21 @@ enum MachineIdentity {
         return uuid
     }()
 
-    /// Human-readable name shown on other Macs ("Andrew's MacBook Pro").
+    /// Human-readable name shown on other devices ("Andrew's MacBook Pro",
+    /// "Andrew's iPad").
     static var displayName: String {
-        Host.current().localizedName ?? Host.current().name ?? "Mac"
+        #if os(iOS)
+        return UIDevice.current.name
+        #else
+        return Host.current().localizedName ?? Host.current().name ?? "Mac"
+        #endif
     }
 
     static var hostname: String {
-        Host.current().name ?? ""
+        #if os(iOS)
+        return UIDevice.current.name
+        #else
+        return Host.current().name ?? ""
+        #endif
     }
 }

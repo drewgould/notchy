@@ -28,6 +28,8 @@ nonisolated enum RemoteMessageType: UInt8 {
     case createSessionRequest = 0x0B
     case createSessionResponse = 0x0C
     case sessionClosed = 0x0D
+    /// Viewer → worker: please size the PTY to these dims (viewer-driven sizing).
+    case resizeRequest = 0x0E
     /// Binary. Full-reset + ring-buffer backfill on subscribe.
     case termSnapshot = 0x10
     /// Binary. Live PTY output.
@@ -35,7 +37,14 @@ nonisolated enum RemoteMessageType: UInt8 {
     /// Binary. Viewer keystrokes destined for the worker's PTY.
     case termInput = 0x12
 
-    var isBinary: Bool { rawValue >= 0x10 }
+    // Pairing block (JSON). Exchanged on an untrusted connection to establish a
+    // per-peer key via a PIN-authenticated ECDH.
+    /// Initiator → responder: initiator's ephemeral public key.
+    case pairBegin = 0x20
+    /// Responder → initiator: responder's ephemeral public key + PIN-keyed tag.
+    case pairResponse = 0x21
+    /// Initiator → responder: initiator's PIN-keyed confirmation tag.
+    case pairConfirm = 0x22
 }
 
 // MARK: - Control message payloads
@@ -87,6 +96,21 @@ nonisolated struct CreateSessionResponseMessage: Codable {
 
 nonisolated struct SessionClosedMessage: Codable {
     let sessionId: UUID
+}
+
+// MARK: - Pairing payloads
+
+nonisolated struct PairBeginMessage: Codable {
+    let initiatorPublicKey: Data
+}
+
+nonisolated struct PairResponseMessage: Codable {
+    let responderPublicKey: Data
+    let confirmationTag: Data
+}
+
+nonisolated struct PairConfirmMessage: Codable {
+    let confirmationTag: Data
 }
 
 // MARK: - Framing

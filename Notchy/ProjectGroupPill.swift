@@ -37,13 +37,17 @@ struct ProjectGroupPill: View {
                 Button {
                     sessionStore.selectGroup(group.id)
                 } label: {
-                    let title = sessionStore.groupNeedsAttention(group.id)
+                    let base = sessionStore.groupNeedsAttention(group.id)
                         ? "\(group.name) !"
                         : group.name
+                    // Remote groups mirror another Mac — flag them with a laptop glyph.
+                    let title: Text = group.remoteMachineId != nil
+                        ? Text("\(Image(systemName: "laptopcomputer")) \(base)")
+                        : Text(base)
                     if group.id == sessionStore.activeProjectGroupId {
-                        Label(title, systemImage: "checkmark")
+                        Label { title } icon: { Image(systemName: "checkmark") }
                     } else {
-                        Text(title)
+                        title
                     }
                 }
             }
@@ -91,30 +95,34 @@ struct ProjectGroupPill: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "folder")
-                    .font(.system(size: 10, weight: .medium))
+                Image(systemName: "folder.fill")
+                    .font(.system(size: 10, weight: .semibold))
                 Text(displayName)
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
-                    .opacity(0.6)
+                    .opacity(0.75)
             }
-            .foregroundColor(.white.opacity(foregroundOpacity))
+            .foregroundColor(.white)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.white.opacity(0.08))
+                    .fill(Color.white.opacity(0.14))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 6)
-                    .stroke(Color.white.opacity(0.1), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.22), lineWidth: 1)
             )
             .contentShape(Rectangle())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
+        // A borderlessButton Menu draws its label through the underlying AppKit
+        // control, which follows the tint color and ignores .foregroundColor —
+        // without this the label renders black. See the "+" menu in PanelContentView.
+        .tint(.white)
         .fixedSize()
         .alert("Rename Project", isPresented: $showRenameDialog) {
             TextField("Project name", text: $renameText)

@@ -41,6 +41,12 @@ struct PanelContentView: View {
         sessionStore.isWindowFocused ? 1.0 : 0.6
     }
 
+    /// Chrome control icons (Conductor toggle, new-session) shouldn't dim as far
+    /// as text does when the panel loses focus — they stay reachable/legible.
+    private var chromeIconOpacity: Double {
+        sessionStore.isWindowFocused ? 1.0 : 0.85
+    }
+
     /// When expanded + unfocused, make chrome backgrounds semi-transparent
     /// so the user can see through to things like Xcode build status.
     private var chromeBackgroundOpacity: Double {
@@ -103,12 +109,16 @@ struct PanelContentView: View {
                 ZStack {
                     Button(action: { showConductor.toggle() }) {
                         Image(systemName: showConductor ? "rectangle.stack.fill" : "rectangle.stack")
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(width: 28, height: 28)
+                            .font(.system(size: 12, weight: .semibold))
+                            .frame(width: 26, height: 24)
                             .contentShape(Rectangle())
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.white.opacity(showConductor ? 0.16 : 0.08))
+                            )
                     }
                     .buttonStyle(.plain)
-                    .foregroundColor(.white.opacity(foregroundOpacity))
+                    .foregroundColor(.white.opacity(chromeIconOpacity))
                     .help(showConductor ? "Hide Conductor" : "Show Conductor (all sessions)")
                 }
                 .padding(.leading, -4)
@@ -118,49 +128,21 @@ struct PanelContentView: View {
                     // Click keeps the old behavior (local session); the
                     // pulldown offers creation on other Macs when remote tabs
                     // know about any.
-                    Menu {
-                        Button("New Session on This Mac") {
-                            sessionStore.createLocalQuickSession()
-                        }
-                        let targets = SettingsManager.shared.remoteTabsEnabled ? CloudSyncManager.shared.creationTargets : []
-                        if !targets.isEmpty {
-                            Divider()
-                            ForEach(targets, id: \.machineId) { manifest in
-                                Menu("New Session on \(manifest.name)") {
-                                    ForEach(manifest.groups.filter { $0.rootPath != nil }, id: \.name) { group in
-                                        Button(group.name) {
-                                            RemoteSessionCoordinator.shared.createRemoteSession(
-                                                on: manifest.machineId,
-                                                projectName: group.name,
-                                                workingDirectory: group.rootPath,
-                                                repoName: group.rootPath.map { ($0 as NSString).lastPathComponent }
-                                            )
-                                        }
-                                    }
-                                    Button("Home Directory") {
-                                        RemoteSessionCoordinator.shared.createRemoteSession(
-                                            on: manifest.machineId,
-                                            projectName: "Terminal",
-                                            workingDirectory: "~",
-                                            repoName: nil
-                                        )
-                                    }
-                                }
-                            }
-                        }
+                    Button {
+                        sessionStore.createQuickSession()
                     } label: {
                         Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .medium))
-                            .frame(width: 28, height: 28)
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(chromeIconOpacity))
+                            .frame(width: 26, height: 24)
                             .contentShape(Rectangle())
-                    } primaryAction: {
-                        sessionStore.createQuickSession()
+                            .background(
+                                RoundedRectangle(cornerRadius: 6)
+                                    .fill(Color.white.opacity(0.08))
+                            )
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
                     .buttonStyle(.plain)
-                    .foregroundColor(.white.opacity(foregroundOpacity))
-                    .help("New session (hold for remote Macs)")
+                    .help("New session")
                 }
                 .padding(.leading, -4)
                 .padding(.trailing, -10)
