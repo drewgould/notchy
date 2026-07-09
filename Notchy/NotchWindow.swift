@@ -369,18 +369,9 @@ class NotchWindow: NSPanel {
     private func checkMouse() {
         let mouseLocation = NSEvent.mouseLocation
 
-        // Check the notch area itself
-        guard let screen = resolvedScreen else { return }
-        let screenFrame = screen.frame
-        let effectiveWidth = isExpanded ? notchWidth + 80 : notchWidth
-        let notchRect = NSRect(
-            x: screenFrame.midX - effectiveWidth / 2,
-            y: screenFrame.maxY - notchHeight,
-            width: effectiveWidth,
-            height: notchHeight + 1  // +1 so the top screen edge (maxY) is inside the rect
-        )
-
-        let mouseInNotch = notchRect.contains(mouseLocation)
+        // Check the notch area itself — same rect AppDelegate's hover-to-hide
+        // test uses, so the two never disagree at a boundary.
+        let mouseInNotch = hoverTriggerRect.contains(mouseLocation)
         let mouseInAdditional = additionalHoverRects.contains { $0().contains(mouseLocation) }
 
         if mouseInNotch || mouseInAdditional {
@@ -400,6 +391,24 @@ class NotchWindow: NSPanel {
                 hoverShrink()
             }
         }
+    }
+
+    /// The canonical rect (screen coordinates) that triggers and holds hover.
+    /// Derived from the detected notch size + `isExpanded`, NOT the live window
+    /// `frame`, so it stays stable while grow/collapse animations are in flight.
+    /// Both the show trigger (`checkMouse`) and the panel's hover-to-hide test
+    /// (AppDelegate) read this — if they used different geometry they'd disagree
+    /// at the edges and flicker the panel open/closed.
+    var hoverTriggerRect: NSRect {
+        guard let screen = resolvedScreen else { return frame }
+        let screenFrame = screen.frame
+        let effectiveWidth = isExpanded ? notchWidth + 80 : notchWidth
+        return NSRect(
+            x: screenFrame.midX - effectiveWidth / 2,
+            y: screenFrame.maxY - notchHeight,
+            width: effectiveWidth,
+            height: notchHeight + 1  // +1 so the top screen edge (maxY) is inside the rect
+        )
     }
 
     /// Called when the panel hides — forces the notch back to normal size.

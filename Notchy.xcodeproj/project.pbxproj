@@ -12,6 +12,16 @@
 		BD0000280000000000000028 /* Notchy-Widget.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = BD0000230000000000000023 /* Notchy-Widget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		BD0000310000000000000031 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 31844E2B2F7210B20074F7B7 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BD0000190000000000000019;
+			remoteInfo = "Notchy-Widget";
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXCopyFilesBuildPhase section */
 		BD0000290000000000000029 /* Embed Foundation Extensions */ = {
 			isa = PBXCopyFilesBuildPhase;
@@ -199,8 +209,8 @@
 			dependencies = (
 			);
 			fileSystemSynchronizedGroups = (
-				BD0000180000000000000018 /* NotchyWidget */,
 				BD0000170000000000000017 /* ActivityShared */,
+				BD0000180000000000000018 /* NotchyWidget */,
 			);
 			name = "Notchy-Widget";
 			packageProductDependencies = (
@@ -210,16 +220,6 @@
 			productType = "com.apple.product-type.app-extension";
 		};
 /* End PBXNativeTarget section */
-
-/* Begin PBXContainerItemProxy section */
-		BD0000310000000000000031 /* PBXContainerItemProxy */ = {
-			isa = PBXContainerItemProxy;
-			containerPortal = 31844E2B2F7210B20074F7B7 /* Project object */;
-			proxyType = 1;
-			remoteGlobalIDString = BD0000190000000000000019;
-			remoteInfo = "Notchy-Widget";
-		};
-/* End PBXContainerItemProxy section */
 
 /* Begin PBXProject section */
 		31844E2B2F7210B20074F7B7 /* Project object */ = {
@@ -263,14 +263,6 @@
 			);
 		};
 /* End PBXProject section */
-
-/* Begin PBXTargetDependency section */
-		BD0000300000000000000030 /* PBXTargetDependency */ = {
-			isa = PBXTargetDependency;
-			target = BD0000190000000000000019 /* Notchy-Widget */;
-			targetProxy = BD0000310000000000000031 /* PBXContainerItemProxy */;
-		};
-/* End PBXTargetDependency section */
 
 /* Begin PBXResourcesBuildPhase section */
 		31844E312F7210B20074F7B7 /* Resources */ = {
@@ -319,6 +311,14 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		BD0000300000000000000030 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BD0000190000000000000019 /* Notchy-Widget */;
+			targetProxy = BD0000310000000000000031 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		31844E3C2F7210B30074F7B7 /* Debug */ = {
@@ -527,7 +527,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
+				DEVELOPMENT_TEAM = J2LH26PR2T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NotchyiOS/Info.plist;
@@ -556,7 +556,7 @@
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
+				DEVELOPMENT_TEAM = J2LH26PR2T;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = NotchyiOS/Info.plist;
@@ -583,9 +583,9 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
+				DEVELOPMENT_TEAM = J2LH26PR2T;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "NotchyWidget/Info.plist";
+				INFOPLIST_FILE = NotchyWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -612,9 +612,9 @@
 			buildSettings = {
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = 2Y5BF8JZF6;
+				DEVELOPMENT_TEAM = J2LH26PR2T;
 				GENERATE_INFOPLIST_FILE = NO;
-				INFOPLIST_FILE = "NotchyWidget/Info.plist";
+				INFOPLIST_FILE = NotchyWidget/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -627,9 +627,9 @@
 				SDKROOT = iphoneos;
 				SKIP_INSTALL = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_COMPILATION_MODE = wholemodule;
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};

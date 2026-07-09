@@ -34,7 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// The screen that triggered the current hover-opened panel.
     private var hoverTriggerScreen: NSScreen?
     private let hoverMargin: CGFloat = 15
-    private let hoverHideDelay: TimeInterval = 0.06
+    private let hoverHideDelay: TimeInterval = 0.15
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Wire the remote layer's platform seams before any remote service runs.
@@ -179,8 +179,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let mouse = NSEvent.mouseLocation
-        let inNotch = notchWindow?.frame.insetBy(dx: -hoverMargin, dy: -hoverMargin).contains(mouse) ?? false
-        let inExternalNotch = externalNotchWindows.values.contains { $0.frame.insetBy(dx: -hoverMargin, dy: -hoverMargin).contains(mouse) }
+        let inNotch = notchWindow?.hoverTriggerRect.insetBy(dx: -hoverMargin, dy: -hoverMargin).contains(mouse) ?? false
+        let inExternalNotch = externalNotchWindows.values.contains { $0.hoverTriggerRect.insetBy(dx: -hoverMargin, dy: -hoverMargin).contains(mouse) }
         let inPanel = panel.frame.insetBy(dx: -hoverMargin, dy: -hoverMargin).contains(mouse)
 
         if inNotch || inExternalNotch || inPanel {
