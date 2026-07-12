@@ -249,6 +249,26 @@ class ClickThroughTerminalView: LocalProcessTerminalView {
             j -= 1
         }
 
+        // Guard against scrollback false positives. When you answer a numbered
+        // prompt with a message that itself starts with "N. " (e.g. "2. remove
+        // it now"), Claude echoes it into the transcript as `❯ 2. remove it now`
+        // — byte-identical to a live selected choice line. Left unchecked, that
+        // stale echo anchors here, the caller skips its .idle demotion, and the
+        // session stays pinned to .waitingForInput (the ⚠️ attention flag) long
+        // after Claude went idle. A REAL Claude prompt is always drawn inside a
+        // rounded box (│ borders, ╭/╰ corners); a transcript echo has none. So
+        // require box-drawing context around the choice block, or reject it.
+        let blockIndices = collected.map { $0.idx }
+        guard let lo = blockIndices.min(), let hi = blockIndices.max() else {
+            return ([], nil, nil)
+        }
+        let scanLo = max(0, lo - 2)
+        let scanHi = min(lines.count - 1, hi + 2)
+        let isBoxed = (scanLo...scanHi).contains { idx in
+            lines[idx].contains(where: { "│╭╮╰╯".contains($0) })
+        }
+        guard isBoxed else { return ([], nil, nil) }
+
         let sortedChoices = collected.sorted { $0.choice.number < $1.choice.number }.map { $0.choice }
         let (question, questionIdx) = extractQuestion(from: lines, aboveLineIndex: topChoiceIdx)
         let preview = questionIdx.flatMap { extractPreview(from: lines, aboveQuestionAt: $0) }
