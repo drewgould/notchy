@@ -57,6 +57,7 @@ final class RemoteSessionCoordinator {
     /// iCloud snapshot, and mark sessions online.
     func applyLiveSessionList(machineId: UUID, machineName: String, snapshots: [SessionSnapshot]) {
         guard SettingsManager.shared.remoteTabsEnabled, let store = RemoteRuntime.sink else { return }
+        print("[remote] applyLiveSessionList from \(machineName): \(snapshots.count) sessions groups=\(Set(snapshots.map { $0.groupName ?? "nil" }).sorted())")
         let now = Date()
         for snapshot in snapshots {
             guard !store.isRemoteSessionHidden(snapshot.id) else { continue }
@@ -95,14 +96,19 @@ final class RemoteSessionCoordinator {
             createdAt: Date()
         )
         if RemotePeerManager.shared.isPeerOnline(machineId) {
+            print("[remote] peer online → sending createSession request \(request.requestId) over LAN")
             RemotePeerManager.shared.sendCreateSession(request) { response in
                 if response == nil {
+                    print("[remote] LAN create timed out/failed → falling back to iCloud queue for \(request.requestId)")
                     CloudSyncManager.shared.enqueueCreateRequest(request)
                 } else if let error = response?.error {
                     print("[remote] create session failed on peer: \(error)")
+                } else {
+                    print("[remote] peer accepted createSession \(request.requestId) → sessionId=\(response?.sessionId?.uuidString ?? "nil")")
                 }
             }
         } else {
+            print("[remote] peer OFFLINE → enqueuing createSession \(request.requestId) via iCloud")
             CloudSyncManager.shared.enqueueCreateRequest(request)
         }
     }
@@ -112,8 +118,12 @@ final class RemoteSessionCoordinator {
     /// failure written back to the request file.
     @discardableResult
     func handleCreateRequest(_ request: RemoteCreateRequest, fileURL: URL?) -> UUID? {
+        print("[remote] handleCreateRequest \(request.requestId) workingDir=\(request.workingDirectory ?? "nil") repo=\(request.repoName ?? "nil") via=\(fileURL == nil ? "LAN" : "iCloud")")
         // Only a worker can create a local session; a viewer-only device no-ops.
-        guard let host = RemoteRuntime.host else { return nil }
+        guard let host = RemoteRuntime.host else {
+            print("[remote] handleCreateRequest: no host (viewer-only device) — ignoring")
+            return nil
+        }
         let directory: String? = {
             if let dir = request.workingDirectory.map({ ($0 as NSString).expandingTildeInPath }),
                FileManager.default.fileExists(atPath: dir) {
@@ -125,12 +135,14 @@ final class RemoteSessionCoordinator {
             return nil
         }()
         guard let directory else {
+            print("[remote] handleCreateRequest \(request.requestId): DIRECTORY NOT FOUND (workingDir=\(request.workingDirectory ?? "nil") repo=\(request.repoName ?? "nil")) — aborting")
             if let fileURL {
                 CloudSyncManager.shared.completeRequest(request, fileURL: fileURL, error: "directory not found")
             }
             return nil
         }
         let sessionId = host.createLocalSession(named: request.projectName, workingDirectory: directory)
+        print("[remote] handleCreateRequest \(request.requestId): created local session \(sessionId) in \(directory)")
         if let fileURL {
             CloudSyncManager.shared.completeRequest(request, fileURL: fileURL, error: nil)
         }

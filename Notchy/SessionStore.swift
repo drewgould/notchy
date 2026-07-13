@@ -580,6 +580,7 @@ class SessionStore: RemoteSessionSink {
         if let activeId = activeProjectGroupId,
            let activeGroup = projectGroups.first(where: { $0.id == activeId }),
            let machineId = activeGroup.remoteMachineId {
+            print("[remote] + on remote group '\(activeGroup.name)' → createRemoteSession machine=\(machineId) project=\(activeGroup.remoteProjectName ?? "nil") root=\(activeGroup.rootPath ?? "nil")")
             RemoteSessionCoordinator.shared.createRemoteSession(
                 on: machineId,
                 projectName: activeGroup.remoteProjectName ?? "Terminal",
@@ -588,6 +589,7 @@ class SessionStore: RemoteSessionSink {
             )
             return
         }
+        print("[remote] + fell through to LOCAL session (activeGroup=\(activeProjectGroupId.map { id in projectGroups.first { $0.id == id }?.name ?? "?" } ?? "nil"), remoteMachineId=nil)")
         createLocalQuickSession()
     }
 
