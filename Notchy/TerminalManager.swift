@@ -714,7 +714,14 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
     /// Injects raw bytes from a viewer Mac's keyboard — same path as local
     /// typing (TerminalView.send routes through the delegate to the process).
     func sendRawInput(to sessionId: UUID, data: Data) {
-        terminals[sessionId]?.send(data: ArraySlice([UInt8](data)))
+        guard let terminal = terminals[sessionId] else {
+            // Lazy start: a tab never rendered on this Mac has no live terminal,
+            // so remote keystrokes have nowhere to go. Log instead of silently
+            // dropping so this is distinguishable from a transport stall.
+            print("[remote] dropping \(data.count)B input — no live terminal for \(sessionId)")
+            return
+        }
+        terminal.send(data: ArraySlice([UInt8](data)))
     }
 
     /// Force this session's PTY grid to a viewer's requested dims (SIGWINCH to

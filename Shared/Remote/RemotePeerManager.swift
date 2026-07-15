@@ -35,6 +35,11 @@ final class RemotePeerManager {
     private var dialDelay: [UUID: TimeInterval] = [:]
 
     private var maintenanceTimer: Timer?
+    /// Held while any peer is connected so the process stays out of App Nap —
+    /// otherwise the OS throttles `networkQueue` when the Mac locks and the
+    /// inbound receive loop stalls (queued output still drains, so the viewer
+    /// sees output but keystrokes never arrive). See `refreshServingActivity`.
+    private var servingActivity: NSObjectProtocol?
     private var lastPingAt = Date.distantPast
     private var sessionListDebounce: Timer?
     /// Sessions with unsent live-state changes, flushed on a short debounce.
@@ -100,6 +105,7 @@ final class RemotePeerManager {
         pendingResponderPairing = [:]
         pairingIntents = [:]
         discoveredEndpoints = [:]
+        refreshServingActivity()
         for id in machineIds { RemoteRuntime.sink?.setPeerOnline(id, false) }
     }
 
@@ -221,6 +227,7 @@ final class RemotePeerManager {
     }
 
     private func peerWentOffline(_ machineId: UUID) {
+        refreshServingActivity()
         RemoteRuntime.sink?.setPeerOnline(machineId, false)
         RemoteRuntime.host?.unsubscribeAllMirrors(machineId: machineId)
         RemoteRuntime.terminalSink?.peerWentOffline(machineId)
@@ -288,9 +295,26 @@ final class RemotePeerManager {
         dialDelay[machineId] = nil
         nextDialAttempt[machineId] = nil
         print("[remote] connected to \(name) (\(machineId))")
+        refreshServingActivity()
         RemoteRuntime.sink?.setPeerOnline(machineId, true)
         RemoteRuntime.terminalSink?.peerCameOnline(machineId)
         sendSessionList(to: peer)
+    }
+
+    /// Take/drop an App Nap–preventing activity assertion based on whether any
+    /// peer is currently connected. `userInitiatedAllowingIdleSystemSleep`
+    /// keeps the process (and thus `networkQueue`'s receive loop) responsive
+    /// while the Mac is locked without altering its idle-sleep policy.
+    private func refreshServingActivity() {
+        if !peers.isEmpty, servingActivity == nil {
+            servingActivity = ProcessInfo.processInfo.beginActivity(
+                options: .userInitiatedAllowingIdleSystemSleep,
+                reason: "Serving remote terminal viewer"
+            )
+        } else if peers.isEmpty, let activity = servingActivity {
+            ProcessInfo.processInfo.endActivity(activity)
+            servingActivity = nil
+        }
     }
 
     // MARK: - Frame dispatch
