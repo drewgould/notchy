@@ -724,6 +724,29 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
         terminal.send(data: ArraySlice([UInt8](data)))
     }
 
+    /// Handle a screenshot pasted on a viewer: stage the PNG on this Mac's
+    /// clipboard, then send Claude's paste keystroke (Ctrl+V, 0x16) into the
+    /// PTY. Claude's TUI reads the image straight off the local pasteboard on
+    /// paste — the same flow as a local Cmd/Ctrl+V — so the viewer never needs
+    /// clipboard access on the Mac. Both the terminal write and pasteboard must
+    /// touch AppKit on the main thread.
+    func pasteImageFromViewer(to sessionId: UUID, png: Data) {
+        DispatchQueue.main.async {
+            guard let terminal = self.terminals[sessionId] else {
+                print("[remote] dropping \(png.count)B image — no live terminal for \(sessionId)")
+                return
+            }
+            let pb = NSPasteboard.general
+            pb.clearContents()
+            pb.declareTypes([.png, .tiff], owner: nil)
+            pb.setData(png, forType: .png)
+            if let tiff = NSImage(data: png)?.tiffRepresentation {
+                pb.setData(tiff, forType: .tiff)
+            }
+            terminal.send(data: ArraySlice([0x16]))  // Ctrl+V — Claude reads clipboard
+        }
+    }
+
     /// Force this session's PTY grid to a viewer's requested dims (SIGWINCH to
     /// the child). Only called while a remote viewer is driving the size.
     func applyRemoteResize(sessionId: UUID, cols: Int, rows: Int) {

@@ -394,6 +394,9 @@ final class RemotePeerManager {
         case .termInput:
             guard let (sessionId, bytes) = FrameCodec.parseBinaryPayload(payload) else { return }
             RemoteRuntime.host?.sendRawInput(to: sessionId, data: bytes)
+        case .termImage:
+            guard let (sessionId, bytes) = FrameCodec.parseBinaryPayload(payload) else { return }
+            RemoteRuntime.host?.pasteImage(to: sessionId, data: bytes)
         case .createSessionRequest:
             guard let request = FrameCodec.decodeJSON(RemoteCreateRequest.self, from: payload) else { return }
             let sessionId = RemoteSessionCoordinator.shared.handleCreateRequest(request, fileURL: nil)
@@ -632,6 +635,17 @@ final class RemotePeerManager {
 
     func sendTermInput(machineId: UUID, sessionId: UUID, bytes: Data) {
         peers[machineId]?.send(FrameCodec.encodeBinary(.termInput, sessionId: sessionId, bytes: bytes))
+    }
+
+    /// Ship a viewer-pasted PNG to the worker, which stages it on its clipboard
+    /// and sends Claude a paste keystroke. Dropped (with a log) if it exceeds the
+    /// frame cap — the viewer is expected to downscale first.
+    func sendTermImage(machineId: UUID, sessionId: UUID, png: Data) {
+        guard png.count + 16 <= FrameCodec.maxFrameLength else {
+            print("[remote] not sending \(png.count)B image — exceeds frame cap")
+            return
+        }
+        peers[machineId]?.send(FrameCodec.encodeBinary(.termImage, sessionId: sessionId, bytes: png))
     }
 
     /// Viewer → worker: ask the worker to size this session's PTY to `cols`×`rows`

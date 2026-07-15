@@ -82,6 +82,37 @@ final class TouchRemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTe
         terminals[sessionId]?.send(data: ArraySlice(bytes))
     }
 
+    /// Send a pasted screenshot to the worker, which stages it on its clipboard
+    /// and hands it to Claude. Downscaled to Claude's vision bound and PNG-
+    /// encoded first so it fits a single frame. Returns false if the image
+    /// couldn't be encoded or the session isn't attached.
+    @discardableResult
+    func sendImage(_ image: UIImage, to sessionId: UUID) -> Bool {
+        guard let machineId = machineForSession[sessionId],
+              let png = Self.encodeForPaste(image) else { return false }
+        RemotePeerManager.shared.sendTermImage(machineId: machineId, sessionId: sessionId, png: png)
+        return true
+    }
+
+    /// Downscale to ~1568px on the longest edge (Claude's vision bound — larger
+    /// buys nothing) and PNG-encode, keeping the payload well under the frame cap.
+    private static func encodeForPaste(_ image: UIImage) -> Data? {
+        let maxEdge: CGFloat = 1568
+        let px = CGSize(width: image.size.width * image.scale,
+                        height: image.size.height * image.scale)
+        guard px.width > 0, px.height > 0 else { return nil }
+        let factor = min(1, maxEdge / max(px.width, px.height))
+        let target = CGSize(width: (px.width * factor).rounded(),
+                            height: (px.height * factor).rounded())
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = false
+        let scaled = UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            image.draw(in: CGRect(origin: .zero, size: target))
+        }
+        return scaled.pngData()
+    }
+
     // MARK: - RemoteTerminalSink
 
     func peerCameOnline(_ machineId: UUID) {

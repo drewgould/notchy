@@ -40,8 +40,8 @@ nonisolated final class PeerConnection {
         set { keyLock.lock(); _encryptionKey = newValue; keyLock.unlock() }
     }
 
-    /// Encrypted units add AES-GCM overhead over the ≤1 MB inner frame cap.
-    private static let maxOuterLength = 2 * 1024 * 1024
+    /// Encrypted units add AES-GCM overhead over the ≤4 MB inner frame cap.
+    private static let maxOuterLength = 5 * 1024 * 1024
 
     init(connection: NWConnection, role: Role, remoteMachineId: UUID? = nil) {
         self.connection = connection

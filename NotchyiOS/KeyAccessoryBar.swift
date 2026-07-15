@@ -1,8 +1,10 @@
 import SwiftUI
+import UIKit
 
 /// A row of the terminal keys iOS soft keyboards lack — esc, tab, ctrl-C, and
 /// arrows — sent to the worker's PTY as the raw escape sequences Claude's TUI
-/// expects. Shown above the keyboard while a terminal is open.
+/// expects, plus a paste-screenshot button. Shown above the keyboard while a
+/// terminal is open.
 struct KeyAccessoryBar: View {
     let sessionId: UUID
 
@@ -16,6 +18,7 @@ struct KeyAccessoryBar: View {
                 key(nil, systemImage: "arrow.down") { send([0x1b, 0x5b, 0x42]) }    // ESC [ B
                 key(nil, systemImage: "arrow.left") { send([0x1b, 0x5b, 0x44]) }    // ESC [ D
                 key(nil, systemImage: "arrow.right") { send([0x1b, 0x5b, 0x43]) }   // ESC [ C
+                key(nil, systemImage: "photo") { pasteImage() }
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
@@ -25,6 +28,16 @@ struct KeyAccessoryBar: View {
 
     private func send(_ bytes: [UInt8]) {
         TouchRemoteTerminalManager.shared.sendBytes(bytes, to: sessionId)
+    }
+
+    /// Paste the clipboard's image (e.g. a screenshot) through to the worker's
+    /// Claude. No-op with a warning haptic if the clipboard holds no image.
+    private func pasteImage() {
+        guard let image = UIPasteboard.general.image else {
+            UINotificationFeedbackGenerator().notificationOccurred(.warning)
+            return
+        }
+        TouchRemoteTerminalManager.shared.sendImage(image, to: sessionId)
     }
 
     @ViewBuilder

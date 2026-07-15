@@ -2,7 +2,7 @@ import Foundation
 
 /// Wire protocol between Notchy instances: length-prefixed frames over TCP.
 ///
-///   frame  := length  UInt32 big-endian (bytes after this field, ≤ 1 MB)
+///   frame  := length  UInt32 big-endian (bytes after this field, ≤ 4 MB)
 ///             type    UInt8 (RemoteMessageType raw value)
 ///             payload
 ///
@@ -36,6 +36,10 @@ nonisolated enum RemoteMessageType: UInt8 {
     case termData = 0x11
     /// Binary. Viewer keystrokes destined for the worker's PTY.
     case termInput = 0x12
+    /// Binary. A viewer-pasted image (PNG) for the worker to hand to Claude —
+    /// 16 UUID bytes then the raw PNG. Larger than a keystroke burst, hence the
+    /// image-sized frame cap below.
+    case termImage = 0x13
 
     // Pairing block (JSON). Exchanged on an untrusted connection to establish a
     // per-peer key via a PIN-authenticated ECDH.
@@ -117,8 +121,10 @@ nonisolated struct PairConfirmMessage: Codable {
 
 nonisolated enum FrameCodec {
     /// Well above any control message or PTY burst; a frame claiming more is
-    /// a corrupt stream and the connection gets dropped.
-    static let maxFrameLength = 1_048_576
+    /// a corrupt stream and the connection gets dropped. Sized to admit a
+    /// pasted screenshot (`termImage`) — viewers downscale to Claude's vision
+    /// bound (~1568px longest edge) first, so a PNG lands comfortably under it.
+    static let maxFrameLength = 4 * 1024 * 1024
 
     static func encodeJSON<T: Encodable>(_ type: RemoteMessageType, _ message: T) -> Data? {
         let encoder = JSONEncoder()

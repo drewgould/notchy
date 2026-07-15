@@ -22,6 +22,10 @@ final class MacTerminalHost: LocalTerminalHost {
         TerminalManager.shared.sendRawInput(to: sessionId, data: data)
     }
 
+    func pasteImage(to sessionId: UUID, data: Data) {
+        TerminalManager.shared.pasteImageFromViewer(to: sessionId, png: data)
+    }
+
     func applyViewerResize(sessionId: UUID, cols: Int, rows: Int) {
         let c = max(20, min(500, cols))
         let r = max(5, min(200, rows))

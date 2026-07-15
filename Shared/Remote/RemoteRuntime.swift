@@ -61,6 +61,11 @@ protocol LocalTerminalHost: AnyObject {
     /// Inject a viewer's keystrokes into a local session's PTY.
     func sendRawInput(to sessionId: UUID, data: Data)
 
+    /// Stage a viewer-pasted image (PNG) on this machine's clipboard and hand it
+    /// to the local session's Claude via a paste keystroke — the same path a
+    /// local user takes when pasting a screenshot.
+    func pasteImage(to sessionId: UUID, data: Data)
+
     /// A viewer asked to drive this local session's grid — resize the PTY to
     /// the requested dims (clamped). Only ever called in response to a viewer;
     /// with no viewer attached the local terminal sizes itself as usual.
