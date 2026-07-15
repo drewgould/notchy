@@ -37,8 +37,10 @@ struct ProjectGroupPill: View {
                 Button {
                     sessionStore.selectGroup(group.id)
                 } label: {
+                    // Emoji (not an SF Symbol) so the dot renders in color — an
+                    // AppKit-backed menu tints symbol icons to the label color.
                     let base = sessionStore.groupNeedsAttention(group.id)
-                        ? "\(group.name) !"
+                        ? "🔴 \(group.name)"
                         : group.name
                     // Remote groups mirror another Mac — flag them with a laptop glyph.
                     let title: Text = group.remoteMachineId != nil

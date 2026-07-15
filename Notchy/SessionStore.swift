@@ -306,7 +306,7 @@ class SessionStore: RemoteSessionSink {
     }
 
     /// True when any session in the group is blocked waiting for user input —
-    /// drives the "!" marker in the project switcher menu.
+    /// drives the red-dot marker in the project switcher menu.
     func groupNeedsAttention(_ id: UUID) -> Bool {
         // isStatusLive: an offline peer's stale .waitingForInput must not nag forever.
         sessions.contains { $0.groupId == id && $0.terminalStatus == .waitingForInput && $0.isStatusLive }
