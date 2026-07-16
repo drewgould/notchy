@@ -94,6 +94,17 @@ final class TouchRemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTe
         return true
     }
 
+    /// Stream files dropped on the mirror to the worker, which writes them to its
+    /// own temp dir and types those paths — a path from this iPad would mean
+    /// nothing over there. Returns false if the session isn't attached or the
+    /// drop held nothing sendable.
+    @MainActor
+    @discardableResult
+    func sendDroppedFiles(_ urls: [URL], to sessionId: UUID) -> Bool {
+        guard let machineId = machineForSession[sessionId] else { return false }
+        return FileDropCoordinator.shared.drop(urls, sessionId: sessionId, machineId: machineId)
+    }
+
     /// Downscale to ~1568px on the longest edge (Claude's vision bound — larger
     /// buys nothing) and PNG-encode, keeping the payload well under the frame cap.
     private static func encodeForPaste(_ image: UIImage) -> Data? {

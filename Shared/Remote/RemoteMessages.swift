@@ -6,9 +6,10 @@ import Foundation
 ///             type    UInt8 (RemoteMessageType raw value)
 ///             payload
 ///
-/// Control messages carry UTF-8 JSON of the matching Codable struct. Terminal
-/// data (types ≥ 0x10) is binary: 16 raw UUID bytes then raw PTY bytes —
-/// never base64.
+/// Control messages carry UTF-8 JSON of the matching Codable struct. Types
+/// ≥ 0x10 are binary — never base64. Terminal data (0x10–0x13) is 16 raw UUID
+/// bytes then raw PTY bytes; the file-drop block (0x14–0x17) has its own
+/// layouts, described on `FileTransferCodec`.
 nonisolated enum RemoteMessageType: UInt8 {
     case hello = 0x01
     case ping = 0x03
@@ -40,6 +41,25 @@ nonisolated enum RemoteMessageType: UInt8 {
     /// 16 UUID bytes then the raw PNG. Larger than a keystroke burst, hence the
     /// image-sized frame cap below.
     case termImage = 0x13
+
+    // File-drop block (binary). A file dropped on a viewer travels to the worker
+    // as bytes and lands in a temp dir there; the worker then types that path,
+    // so the drop bottoms out in the same place a local drop does. Chunked, so
+    // an arbitrarily large file rides frames that stay under the cap.
+    // See `FileTransferCodec` for the payload layouts.
+    /// Viewer → worker: opens a transfer (session, transfer id, length, name).
+    case fileBegin = 0x14
+    /// Viewer → worker: one ordered slice of a transfer in flight.
+    case fileChunk = 0x15
+    /// Viewer → worker: transfer complete; carries a SHA-256 to verify against.
+    case fileEnd = 0x16
+    /// Viewer → worker: abandon a transfer and discard its partial file.
+    case fileAbort = 0x17
+    /// Worker → viewer: the only frame in this block that travels back — how a
+    /// transfer actually ended. Without it a viewer can only know its bytes
+    /// reached the transport, not that they landed, so a worker-side failure
+    /// (full disk, closed tab) would show as a clean 100%.
+    case fileResult = 0x18
 
     // Pairing block (JSON). Exchanged on an untrusted connection to establish a
     // per-peer key via a PIN-authenticated ECDH.

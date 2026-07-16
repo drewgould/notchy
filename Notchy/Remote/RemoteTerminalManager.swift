@@ -13,12 +13,34 @@ class RemoteMirrorTerminalView: TerminalView {
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        registerForDraggedTypes([.fileURL])
         installArrowKeyMonitor()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
+        registerForDraggedTypes([.fileURL])
         installArrowKeyMonitor()
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        return .copy
+    }
+
+    /// Unlike the local drop (which types the dropped path straight in), a mirror
+    /// has to ship the bytes: the worker Mac has no file at this path — or worse,
+    /// has a *different* file there. `sendDroppedFiles` streams them over and the
+    /// worker types the path it actually wrote.
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let sessionId = remoteSessionId,
+              let urls = sender.draggingPasteboard.readObjects(
+                  forClasses: [NSURL.self],
+                  options: [.urlReadingFileURLsOnly: true]
+              ) as? [URL], !urls.isEmpty else {
+            return false
+        }
+        RemoteTerminalManager.shared.sendDroppedFiles(urls, to: sessionId)
+        return true
     }
 
     deinit {
@@ -85,6 +107,17 @@ class RemoteTerminalManager: NSObject, TerminalViewDelegate, RemoteTerminalSink 
         machineForSession[sessionId] = machineId
         RemotePeerManager.shared.subscribe(machineId: machineId, sessionId: sessionId)
         return view
+    }
+
+    /// Stream files dropped on a mirror to the worker that owns the session.
+    /// The worker writes them to its own temp dir and types those paths.
+    @MainActor
+    func sendDroppedFiles(_ urls: [URL], to sessionId: UUID) {
+        guard let machineId = machineForSession[sessionId] else {
+            print("[remote] ignoring drop — no machine for session \(sessionId)")
+            return
+        }
+        FileDropCoordinator.shared.drop(urls, sessionId: sessionId, machineId: machineId)
     }
 
     func destroyTerminal(for sessionId: UUID) {

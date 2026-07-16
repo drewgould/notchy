@@ -1,6 +1,13 @@
 import AppKit
 import SwiftTerm
 
+/// POSIX single-quote a path so spaces or quotes in the name survive the trip
+/// through the shell / Claude's prompt parser intact. Shared by the local drop
+/// handler and the remote-drop landing path so both type paths identically.
+func shellQuote(_ path: String) -> String {
+    "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
 class ClickThroughTerminalView: LocalProcessTerminalView {
     var sessionId: UUID?
     private var keyMonitor: Any?
@@ -88,7 +95,7 @@ class ClickThroughTerminalView: LocalProcessTerminalView {
         guard let items = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] else {
             return false
         }
-        let paths = items.map { "'" + $0.path.replacingOccurrences(of: "'", with: "'\\''") + "'" }.joined(separator: " ")
+        let paths = items.map { shellQuote($0.path) }.joined(separator: " ")
         send(txt: paths)
         return true
     }
@@ -745,6 +752,24 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
             }
             terminal.send(data: ArraySlice([0x16]))  // Ctrl+V — Claude reads clipboard
         }
+    }
+
+    /// A file dropped on a viewer has finished landing in this Mac's drop dir —
+    /// type its path, which is what a local drop does too. The trailing space
+    /// lets a multi-file drop accumulate as `'a' 'b' ` on the prompt line:
+    /// transfers ride one ordered stream, so paths land in the drop's order.
+    /// Nothing is submitted — the user still hits Return, same as locally.
+    ///
+    /// Must be called on the main thread (AppKit); returns whether a live
+    /// terminal took the path.
+    @discardableResult
+    func insertDroppedFilePath(to sessionId: UUID, path: String) -> Bool {
+        guard let terminal = terminals[sessionId] else {
+            print("[remote] dropping path \(path) — no live terminal for \(sessionId)")
+            return false
+        }
+        terminal.send(txt: shellQuote(path) + " ")
+        return true
     }
 
     /// Force this session's PTY grid to a viewer's requested dims (SIGWINCH to

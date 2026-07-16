@@ -231,6 +231,8 @@ final class RemotePeerManager {
         RemoteRuntime.sink?.setPeerOnline(machineId, false)
         RemoteRuntime.host?.unsubscribeAllMirrors(machineId: machineId)
         RemoteRuntime.terminalSink?.peerWentOffline(machineId)
+        // Any drop this peer was mid-way through will never finish.
+        FileTransferReceiver.shared.cancelTransfers(from: machineId)
     }
 
     /// Trust anchor: a machine is trusted if its manifest reached us over the
@@ -397,6 +399,25 @@ final class RemotePeerManager {
         case .termImage:
             guard let (sessionId, bytes) = FrameCodec.parseBinaryPayload(payload) else { return }
             RemoteRuntime.host?.pasteImage(to: sessionId, data: bytes)
+        case .fileBegin:
+            guard let begin = FileTransferCodec.parseBegin(payload) else { return }
+            FileTransferReceiver.shared.begin(begin, from: machineId)
+        case .fileChunk:
+            guard let (transferId, sequence, slice) = FileTransferCodec.parseChunk(payload) else { return }
+            FileTransferReceiver.shared.chunk(transferId: transferId, sequence: sequence, slice: slice)
+        case .fileEnd:
+            guard let (transferId, digest) = FileTransferCodec.parseEnd(payload) else { return }
+            FileTransferReceiver.shared.end(transferId: transferId, digest: digest)
+        case .fileAbort:
+            guard let transferId = FileTransferCodec.parseAbort(payload) else { return }
+            FileTransferReceiver.shared.abort(transferId: transferId)
+        case .fileResult:
+            guard let (transferId, ok, reason) = FileTransferCodec.parseResult(payload) else { return }
+            // Frames are already hopped to main before dispatch (see `onFrame`),
+            // which is where the coordinator lives.
+            MainActor.assumeIsolated {
+                FileDropCoordinator.shared.handleResult(transferId: transferId, ok: ok, reason: reason)
+            }
         case .createSessionRequest:
             guard let request = FrameCodec.decodeJSON(RemoteCreateRequest.self, from: payload) else { return }
             let sessionId = RemoteSessionCoordinator.shared.handleCreateRequest(request, fileURL: nil)
@@ -646,6 +667,18 @@ final class RemotePeerManager {
             return
         }
         peers[machineId]?.send(FrameCodec.encodeBinary(.termImage, sessionId: sessionId, bytes: png))
+    }
+
+    /// Ship one already-encoded file-transfer frame, reporting through `completion`
+    /// whether the transport took it — that's what paces `FileTransferSender`'s
+    /// chunks and lets it give up when the peer goes away. A vanished peer still
+    /// calls back (with false), so an in-flight send can't hang.
+    func sendFileFrame(machineId: UUID, frame: Data, completion: @escaping (Bool) -> Void) {
+        guard let peer = peers[machineId] else {
+            completion(false)
+            return
+        }
+        peer.send(frame, completion: completion)
     }
 
     /// Viewer → worker: ask the worker to size this session's PTY to `cols`×`rows`

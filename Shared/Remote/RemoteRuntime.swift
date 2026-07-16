@@ -66,6 +66,13 @@ protocol LocalTerminalHost: AnyObject {
     /// local user takes when pasting a screenshot.
     func pasteImage(to sessionId: UUID, data: Data)
 
+    /// A file dropped on a viewer has finished landing on this machine — type its
+    /// local path into the session, exactly as a local drop would. Returns false
+    /// if the session has no live terminal (the tab closed while the bytes were in
+    /// flight), which the viewer reports rather than showing a clean success.
+    @discardableResult
+    func insertDroppedFilePath(to sessionId: UUID, path: String) -> Bool
+
     /// A viewer asked to drive this local session's grid — resize the PTY to
     /// the requested dims (clamped). Only ever called in response to a viewer;
     /// with no viewer attached the local terminal sizes itself as usual.

@@ -10,6 +10,8 @@ struct RemoteTerminalScreen: View {
     let title: String
 
     @State private var store = RemoteViewerStore.shared
+    @State private var drops = FileDropCoordinator.shared
+    @State private var isTargeted = false
 
     /// Live session from the store (the passed-in title is stable; choices update).
     private var liveSession: TerminalSession? {
@@ -20,6 +22,20 @@ struct RemoteTerminalScreen: View {
         VStack(spacing: 0) {
             TouchTerminalView(sessionId: sessionId, machineId: machineId)
                 .ignoresSafeArea(.container, edges: .bottom)
+                .dropDestination(for: URL.self) { urls, _ in
+                    TouchRemoteTerminalManager.shared.sendDroppedFiles(urls, to: sessionId)
+                } isTargeted: { targeted in
+                    isTargeted = targeted
+                }
+                .overlay(alignment: .center) {
+                    if isTargeted {
+                        RoundedRectangle(cornerRadius: 12)
+                            .strokeBorder(Color.accentColor, style: StrokeStyle(lineWidth: 2, dash: [6]))
+                            .padding(8)
+                            .allowsHitTesting(false)
+                    }
+                }
+                .overlay(alignment: .top) { transferBanner }
             if let session = liveSession, !session.pendingChoices.isEmpty {
                 choiceBar(session)
             }
@@ -29,6 +45,34 @@ struct RemoteTerminalScreen: View {
         .navigationBarTitleDisplayMode(.inline)
         .onDisappear {
             TouchRemoteTerminalManager.shared.destroyTerminal(for: sessionId)
+        }
+    }
+
+    /// Drops stream to the Mac, so a big file takes real time — show it moving,
+    /// and surface a rejection (folder / too large) rather than dropping silently.
+    @ViewBuilder
+    private var transferBanner: some View {
+        if let name = drops.activeName {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Sending \(name)")
+                    .font(.caption)
+                    .lineLimit(1)
+                ProgressView(value: drops.fractionComplete)
+                    .progressViewStyle(.linear)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .padding(8)
+            .transition(.opacity)
+        } else if let error = drops.lastError {
+            Text(error)
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .background(.thinMaterial, in: Capsule())
+                .padding(8)
+                .transition(.opacity)
         }
     }
 

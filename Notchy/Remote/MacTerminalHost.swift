@@ -26,6 +26,11 @@ final class MacTerminalHost: LocalTerminalHost {
         TerminalManager.shared.pasteImageFromViewer(to: sessionId, png: data)
     }
 
+    @discardableResult
+    func insertDroppedFilePath(to sessionId: UUID, path: String) -> Bool {
+        TerminalManager.shared.insertDroppedFilePath(to: sessionId, path: path)
+    }
+
     func applyViewerResize(sessionId: UUID, cols: Int, rows: Int) {
         let c = max(20, min(500, cols))
         let r = max(5, min(200, rows))

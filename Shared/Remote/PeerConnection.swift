@@ -66,8 +66,22 @@ nonisolated final class PeerConnection {
     }
 
     func send(_ frame: Data) {
-        guard let unit = Self.wrap(frame, key: encryptionKey) else { return }
-        connection.send(content: unit, completion: .contentProcessed { _ in })
+        send(frame, completion: nil)
+    }
+
+    /// `completion` fires once the transport has taken the bytes, reporting
+    /// whether it accepted them. File transfers use it to pace chunks — without
+    /// it, streaming a large drop would queue the whole file on `NWConnection` at
+    /// once — and to stop early when the link dies. Always called, even on a
+    /// dropped frame, so a paced sender can't stall.
+    func send(_ frame: Data, completion: ((Bool) -> Void)?) {
+        guard let unit = Self.wrap(frame, key: encryptionKey) else {
+            completion?(false)
+            return
+        }
+        connection.send(content: unit, completion: .contentProcessed { error in
+            completion?(error == nil)
+        })
     }
 
     /// Wrap one frame in the transport envelope: `[UInt32 len][flag][body]`,
