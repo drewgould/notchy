@@ -15,7 +15,11 @@ final class MacTerminalHost: LocalTerminalHost {
     }
 
     func unsubscribeAllMirrors(machineId: UUID) {
-        TerminalMirrorHub.shared.unsubscribeAll(machineId: machineId)
+        // A dropped viewer that was driving a session's grid leaves it shrunk;
+        // restore any session it left with no viewers remaining.
+        for sessionId in TerminalMirrorHub.shared.unsubscribeAll(machineId: machineId) {
+            TerminalManager.shared.restoreNaturalSize(sessionId: sessionId)
+        }
     }
 
     func sendRawInput(to sessionId: UUID, data: Data) {

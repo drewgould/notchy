@@ -49,10 +49,21 @@ final class TerminalMirrorHub {
         mirrors[sessionId]?.subscribers.remove(machineId)
     }
 
-    func unsubscribeAll(machineId: UUID) {
+    /// Drop a departing viewer from every session and report which sessions it
+    /// left with no viewers remaining — the caller restores those to their
+    /// natural (window-derived) grid, since a viewer that was driving the size
+    /// is now gone. The clean-unsubscribe path does this per session; a dropped
+    /// connection (backgrounded/killed iPad) comes through here instead, and
+    /// without this the worker's PTY stays shrunk to the viewer's grid forever.
+    func unsubscribeAll(machineId: UUID) -> [UUID] {
+        var nowUnwatched: [UUID] = []
         for sessionId in mirrors.keys {
-            mirrors[sessionId]?.subscribers.remove(machineId)
+            guard mirrors[sessionId]?.subscribers.remove(machineId) != nil else { continue }
+            if mirrors[sessionId]?.subscribers.isEmpty == true {
+                nowUnwatched.append(sessionId)
+            }
         }
+        return nowUnwatched
     }
 
     func subscribers(for sessionId: UUID) -> Set<UUID> {
