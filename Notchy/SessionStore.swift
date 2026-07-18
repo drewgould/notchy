@@ -312,6 +312,14 @@ class SessionStore: RemoteSessionSink {
         sessions.contains { $0.groupId == id && $0.terminalStatus == .waitingForInput && $0.isStatusLive }
     }
 
+    /// True when any session in the group is actively working — drives the
+    /// spinner on the project pill and the amber dot in the switcher menu. Same
+    /// isStatusLive guard as `groupNeedsAttention` so a stale offline peer's
+    /// last-known .working state doesn't spin forever.
+    func groupIsWorking(_ id: UUID) -> Bool {
+        sessions.contains { $0.groupId == id && $0.terminalStatus == .working && $0.isStatusLive }
+    }
+
     /// Sessions belonging to the currently-active project group. Drives the tab bar.
     var sessionsInActiveGroup: [TerminalSession] {
         guard let activeId = activeProjectGroupId else { return sessions }

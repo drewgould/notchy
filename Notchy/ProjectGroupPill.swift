@@ -1,10 +1,30 @@
 import SwiftUI
+import AppKit
 
 /// Leading pill in the panel chrome that shows the active `ProjectGroup` and
 /// opens a menu listing all groups + project-level actions.
 struct ProjectGroupPill: View {
     @Bindable var sessionStore: SessionStore
     var foregroundOpacity: Double = 1.0
+
+    // Small status dots for the switcher rows, sized to echo the tab bar's dot
+    // rather than the outsized 🔴 emoji they replace. A pre-rendered,
+    // non-template image renders in its own color — an AppKit-backed menu would
+    // otherwise tint an SF Symbol to the label color (why this was an emoji
+    // before).
+    private static let attentionDot = dot(.systemRed)
+    private static let workingDot = dot(.systemOrange)
+
+    private static func dot(_ color: NSColor, diameter: CGFloat = 7) -> Image {
+        let size = NSSize(width: diameter, height: diameter)
+        let image = NSImage(size: size)
+        image.lockFocus()
+        color.setFill()
+        NSBezierPath(ovalIn: NSRect(origin: .zero, size: size)).fill()
+        image.unlockFocus()
+        image.isTemplate = false
+        return Image(nsImage: image).renderingMode(.original)
+    }
 
     @State private var renameText: String = ""
     @State private var showRenameDialog = false
@@ -31,23 +51,30 @@ struct ProjectGroupPill: View {
         return sessionStore.sessions.allSatisfy { $0.groupId != id }
     }
 
+    private var activeGroupWorking: Bool {
+        guard let id = sessionStore.activeProjectGroupId else { return false }
+        return sessionStore.groupIsWorking(id)
+    }
+
     var body: some View {
         Menu {
             ForEach(sessionStore.projectGroups) { group in
                 Button {
                     sessionStore.selectGroup(group.id)
                 } label: {
-                    // Emoji (not an SF Symbol) so the dot renders in color — an
-                    // AppKit-backed menu tints symbol icons to the label color.
-                    let base = sessionStore.groupNeedsAttention(group.id)
-                        ? "🔴 \(group.name)"
-                        : group.name
                     // Remote groups mirror another Mac — flag them with a laptop glyph.
                     let title: Text = group.remoteMachineId != nil
-                        ? Text("\(Image(systemName: "laptopcomputer")) \(base)")
-                        : Text(base)
+                        ? Text("\(Image(systemName: "laptopcomputer")) \(group.name)")
+                        : Text(group.name)
+                    // Leading icon: the active group keeps its checkmark (its own
+                    // status shows on the pill spinner), other groups surface a red
+                    // dot when they need input or an amber dot when a tab is working.
                     if group.id == sessionStore.activeProjectGroupId {
                         Label { title } icon: { Image(systemName: "checkmark") }
+                    } else if sessionStore.groupNeedsAttention(group.id) {
+                        Label { title } icon: { Self.attentionDot }
+                    } else if sessionStore.groupIsWorking(group.id) {
+                        Label { title } icon: { Self.workingDot }
                     } else {
                         title
                     }
@@ -97,8 +124,15 @@ struct ProjectGroupPill: View {
             }
         } label: {
             HStack(spacing: 4) {
-                Image(systemName: "folder.fill")
-                    .font(.system(size: 10, weight: .semibold))
+                if activeGroupWorking {
+                    // A tab in the active project is working — the same spinner the
+                    // tab bar uses, standing in for the folder glyph.
+                    TabSpinnerView()
+                        .frame(width: 10, height: 10)
+                } else {
+                    Image(systemName: "folder.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                }
                 Text(displayName)
                     .font(.system(size: 11, weight: .semibold))
                     .lineLimit(1)

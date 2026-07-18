@@ -131,8 +131,11 @@ struct SessionTab: View {
     private var liveStatusIndicator: some View {
         switch terminalStatus {
         case .working:
+            // A touch more room than the dots get — the spinning ring reads as
+            // cramped butted right up against the tab name.
             TabSpinnerView()
                 .frame(width: 8, height: 8)
+                .padding(.horizontal, 2)
         case .waitingForInput:
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 8, weight: .bold))
