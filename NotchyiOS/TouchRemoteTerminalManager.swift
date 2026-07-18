@@ -7,6 +7,30 @@ import SwiftTerm
 /// macOS `RemoteMirrorTerminalView`.
 final class MirrorTerminalView: TerminalView {
     var remoteSessionId: UUID?
+
+    /// Send typed characters as plain text, bypassing SwiftTerm's kitty
+    /// keyboard-protocol encoding — the iOS counterpart of the macOS mirror's
+    /// override.
+    ///
+    /// Claude Code turns on the kitty keyboard protocol, and the mirror inherits
+    /// those flags by replaying the worker's output. `commitTextInput` then
+    /// encodes each keystroke as a kitty key-event (CSI u) instead of literal
+    /// text, and routed through the worker that way, typed characters never echo
+    /// back even though the line still submits on Return. Sending plain text
+    /// avoids that; the worker's Claude accepts it fine even in kitty mode.
+    ///
+    /// Return arrives here as "\n" on iOS (unlike macOS, where it routes through
+    /// insertNewline), so it still needs the terminal's CR sequence rather than a
+    /// literal newline. Control/meta and other special keys come through
+    /// pressesBegan, and the accessory bar sends bytes directly — neither touches
+    /// this path.
+    override func insertText(_ text: String) {
+        if text == "\n" {
+            send(returnByteSequence)
+        } else {
+            send(txt: text)
+        }
+    }
 }
 
 /// Centers the mirror terminal at its natural size for the worker's cols/rows —

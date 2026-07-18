@@ -81,6 +81,26 @@ class RemoteMirrorTerminalView: TerminalView {
             return nil // consume the event
         }
     }
+
+    /// Send typed characters as plain text, bypassing SwiftTerm's kitty
+    /// keyboard-protocol encoding.
+    ///
+    /// Claude Code turns on the kitty keyboard protocol, and the mirror inherits
+    /// those flags by replaying the worker's output stream. SwiftTerm then
+    /// encodes every keystroke as a kitty key-event (CSI u) — see
+    /// `MacTerminalView.insertText` — instead of literal text. Routed through the
+    /// worker that way, typed characters never echo back on the mirror even
+    /// though the line still submits on Return. This is the same kitty issue the
+    /// arrow-key monitor above already sidesteps; here we finish the job for
+    /// printable input. The worker's Claude accepts plain text fine even in kitty
+    /// mode (the arrow workaround relies on the same thing).
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        guard let text = string as? NSString else {
+            super.insertText(string, replacementRange: replacementRange)
+            return
+        }
+        send(txt: text as String)
+    }
 }
 
 /// Owns the viewer-side terminal views, keyed by the REMOTE session id —
