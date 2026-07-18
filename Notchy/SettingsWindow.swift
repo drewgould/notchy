@@ -134,7 +134,7 @@ struct IntegrationsTab: View {
             }
             Toggle(isOn: $settings.claudeAutoModeEnabled) {
                 Text("Auto mode")
-                Text("Launch Claude with --enable-auto-mode")
+                Text("Launch Claude with --permission-mode auto")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

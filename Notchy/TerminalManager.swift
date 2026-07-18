@@ -644,7 +644,7 @@ class TerminalManager: NSObject, LocalProcessTerminalViewDelegate {
         // Queued until the first OSC 7 cwd report (= first prompt) for the same reason.
         let hasClaude = launchClaude && SettingsManager.shared.claudeIntegrationEnabled && FileManager.default.fileExists(atPath: (workingDirectory as NSString).appendingPathComponent("CLAUDE.md"))
         if hasClaude {
-            let claudeCommand = SettingsManager.shared.claudeAutoModeEnabled ? "claude --enable-auto-mode" : "claude"
+            let claudeCommand = SettingsManager.shared.claudeAutoModeEnabled ? "claude --permission-mode auto" : "claude"
             terminal.queueStartupCommand("clear && \(claudeCommand)\r", fallbackAfter: 3.0)
         }
 
